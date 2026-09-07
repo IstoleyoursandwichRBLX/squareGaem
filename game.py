@@ -21,52 +21,53 @@ def lerp(start, end, t):
 def easeOut(t):
     return 1 - (1 - t) * (1 - t)
 
-def die(screen):
-    videoPath = "Things/Videos/无信号.mp4"
-    musicPath = "Things/OST/无信号.ogg"
+deathFrames = None
+
+async def loadDeathFrames(screen):
+    global deathFrames
+    if deathFrames is not None:
+        return
+
+    framesPath = "Things/Videos/deathframes"
+    deathFrames = []
 
     try:
-        pygame.mixer.music.load(musicPath)
-        pygame.mixer.music.play(-1)
+        import os
+        frameFiles = sorted(os.listdir(framesPath))
+
+        for filename in frameFiles:
+            frame = pygame.image.load(f"{framesPath}/{filename}").convert()
+            frame = pygame.transform.scale(frame, (screen.get_width(), screen.get_height()))
+            deathFrames.append(frame)
+            await asyncio.sleep(0)
     except:
-        pass
+        deathFrames = []
 
-    try:
-        import cv2
-        cap = cv2.VideoCapture(videoPath)
+async def die(screen):
+    global deathFrames
+    frames = deathFrames if deathFrames else []
 
-        clock = pygame.time.Clock()
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # loop video
-                continue
+    clock = pygame.time.Clock()
+    frameIndex = 0
+    font = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 50)
 
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frame = cv2.resize(frame, (screen.get_width(), screen.get_height()))
-            frameSurface = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
 
-            screen.blit(frameSurface, (0, 0))
-            pygame.display.update()
-            clock.tick(30)
-
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    sys.exit()
-    except:
-        font = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 50)
-
-        while True:
+        if frames:
+            screen.blit(frames[frameIndex], (0, 0))
+            frameIndex = (frameIndex + 1) % len(frames)
+        else:
             screen.fill((0, 0, 0))
             text = font.render("YOU DIED", True, (255, 0, 0))
             screen.blit(text, text.get_rect(center=screen.get_rect().center))
-            pygame.display.update()
 
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    sys.exit()
+        pygame.display.update()
+        clock.tick(12)
+        await asyncio.sleep(0)
 
 def spawnWave(waveNum, playerX, playerY):
     count = 5
@@ -100,6 +101,7 @@ def spawnWave(waveNum, playerX, playerY):
 
 async def startGame(screen, color):
     clock = pygame.time.Clock()
+    await loadDeathFrames(screen)
 
     wave = 1
     enemies = []
@@ -332,7 +334,8 @@ async def startGame(screen, color):
                                     sys.exit()
 
                             pygame.display.update()
-                        die(screen)
+                            await asyncio.sleep(0)
+                        await die(screen)
 
         if punching:
             for e in enemies[:]:
