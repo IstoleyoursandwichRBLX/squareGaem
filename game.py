@@ -21,6 +21,22 @@ def lerp(start, end, t):
 def easeOut(t):
     return 1 - (1 - t) * (1 - t)
 
+def renderTextWithOutline(font, text, textColor, outlineColor, outlineWidth = 2):
+    textSurface = font.render(text, True, textColor)
+    outlineSurface = pygame.Surface(
+        (textSurface.get_width() + outlineWidth * 2, textSurface.get_height() + outlineWidth * 2),
+        pygame.SRCALPHA
+    )
+
+    for dx in range(-outlineWidth, outlineWidth + 1):
+        for dy in range(-outlineWidth, outlineWidth + 1):
+            if dx != 0 or dy != 0:
+                outlineText = font.render(text, True, outlineColor)
+                outlineSurface.blit(outlineText, (dx + outlineWidth, dy + outlineWidth))
+
+    outlineSurface.blit(textSurface, (outlineWidth, outlineWidth))
+    return outlineSurface
+
 deathFrames = None
 
 async def loadDeathFrames(screen):
@@ -51,19 +67,39 @@ async def loadDeathFrames(screen):
     except:
         deathFrames = []
 
-async def die(screen):
+async def die(screen, color):
     global deathFrames
     frames = deathFrames if deathFrames else []
 
     clock = pygame.time.Clock()
     frameIndex = 0
     font = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 50)
+    retryFont = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 70)
+
+    deathScreenStart = pygame.time.get_ticks()
+    retryTextDelay = 1000
+    retryFadeDuration = 500
+    retryAlpha = 0
 
     while True:
+        currentTime = pygame.time.get_ticks()
+        timeSinceDeath = currentTime - deathScreenStart
+
+        if timeSinceDeath >= retryTextDelay:
+            fadeElapsed = timeSinceDeath - retryTextDelay
+            fadeT = min(fadeElapsed / retryFadeDuration, 1)
+            fadeT = easeOut(fadeT)
+            retryAlpha = int(lerp(0, 255, fadeT))
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
+
+            if event.type == pygame.KEYDOWN and retryAlpha >= 255:
+                if event.key == pygame.K_SPACE:
+                    await startGame(screen, color)
+                    return
 
         if frames:
             screen.blit(frames[frameIndex], (0, 0))
@@ -72,6 +108,11 @@ async def die(screen):
             screen.fill((0, 0, 0))
             text = font.render("YOU DIED", True, (255, 0, 0))
             screen.blit(text, text.get_rect(center=screen.get_rect().center))
+
+        if retryAlpha > 0:
+            retryText = renderTextWithOutline(retryFont, "Press SPACE to Retry", (255, 255, 255), (0, 0, 0), outlineWidth = 3)
+            retryText.set_alpha(retryAlpha)
+            screen.blit(retryText, retryText.get_rect(center=screen.get_rect().center))
 
         pygame.display.update()
         clock.tick(12)
@@ -110,6 +151,9 @@ def spawnWave(waveNum, playerX, playerY):
 async def startGame(screen, color):
     clock = pygame.time.Clock()
     await loadDeathFrames(screen)
+
+    pygame.mixer.music.load("Things/OST/waves1to10.ogg")
+    pygame.mixer.music.play(-1)
 
     wave = 1
     enemies = []
@@ -333,6 +377,7 @@ async def startGame(screen, color):
 
                     if health <= 0:
                         health = 0
+                        pygame.mixer.music.stop()
                         deathStart = pygame.time.get_ticks()
 
                         while pygame.time.get_ticks() - deathStart < 250:
@@ -343,7 +388,8 @@ async def startGame(screen, color):
 
                             pygame.display.update()
                             await asyncio.sleep(0)
-                        await die(screen)
+                        await die(screen, color)
+                        return
 
         if punching:
             for e in enemies[:]:
@@ -447,6 +493,9 @@ async def startGame(screen, color):
             wave += 1
             enemies = spawnWave(wave, squareX, squareY)
             waitingForNextWave = False
+
+            if wave == 11:
+                pygame.mixer.music.stop()
 
         screen.fill((20, 20, 20))
         for img in afterimages[:]:

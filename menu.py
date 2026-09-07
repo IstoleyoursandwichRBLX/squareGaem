@@ -225,6 +225,14 @@ async def menuMain():
     startDuration = 800
     squareAlpha = 255
 
+    controlsFont = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 18)
+    controlsLines = [
+        "WASD - Moving",
+        "E - Toggle Fists",
+        "M1 - Shooting/Punching",
+        "Q + W/A/S/D - Dash"
+    ]
+
     while True:
         mousePos = pygame.mouse.get_pos()
         currentTime = pygame.time.get_ticks()
@@ -369,6 +377,15 @@ async def menuMain():
 
         if uiAlpha > 0:
             makeButton(screen, scaledButton, "Play", mousePos, currentScale, uiAlpha)
+
+        if uiAlpha > 0:
+            lineSpacing = 26
+            startY = screen.get_height() - (len(controlsLines) * lineSpacing) - 20
+
+            for i, line in enumerate(controlsLines):
+                lineSurface = controlsFont.render(line, True, textColor)
+                lineSurface.set_alpha(uiAlpha)
+                screen.blit(lineSurface, (20, startY + i * lineSpacing))
 
         if inputAlpha > 0:
             boxSurf = pygame.Surface((inputRect.width, inputRect.height), pygame.SRCALPHA)
