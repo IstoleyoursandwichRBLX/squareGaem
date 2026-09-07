@@ -11,9 +11,6 @@ screen = pygame.display.set_mode((1920, 980))
 pygame.display.set_caption("Square Game")
 
 pygame.mixer.init()
-pygame.mixer.music.load("Things/OST/mainMenu.ogg")
-pygame.mixer.music.play(-1)
-pygame.mixer.music.set_volume(1.0)
 
 secondMusic = pygame.mixer.Sound("Things/OST/changeColorTheme.ogg")
 secondChannel = pygame.mixer.Channel(1)
@@ -75,6 +72,11 @@ def lerp(start, end, t):
 def easeOut(t):
     return 1 - (1 - t) * (1 - t)
 
+def startMenuMusic():
+    pygame.mixer.music.load("Things/OST/mainMenu.ogg")
+    pygame.mixer.music.play(-1)
+    pygame.mixer.music.set_volume(1.0)
+
 def tryParseRGB(text):
     try:
         parts = [p.strip() for p in text.split(",")]
@@ -87,9 +89,76 @@ def tryParseRGB(text):
         pass
     return None
 
+async def checkPassword():
+    correctPassword = "squaregamea"
+    inputText = ""
+    errorMessage = ""
+
+    inputRect = pygame.Rect(710, 460, 500, 60)
+    cursorTimer = 0
+    showCursor = True
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_BACKSPACE:
+                    inputText = inputText[:-1]
+                    errorMessage = ""
+                elif event.key == pygame.K_RETURN:
+                    if inputText == correctPassword:
+                        return
+                    else:
+                        errorMessage = "Incorrect password"
+                        inputText = ""
+                else:
+                    if event.unicode.isprintable() and len(inputText) < 30:
+                        inputText += event.unicode
+                        errorMessage = ""
+
+        cursorTimer += 1
+
+        if cursorTimer >= 30:
+            cursorTimer = 0
+            showCursor = not showCursor
+
+        screen.fill((20, 20, 20))
+
+        boxSurf = pygame.Surface((inputRect.width, inputRect.height), pygame.SRCALPHA)
+        pygame.draw.rect(boxSurf, (0, 0, 0, 255), (0, 0, inputRect.width, inputRect.height))
+        pygame.draw.rect(boxSurf, (255, 255, 255, 255), (0, 0, inputRect.width, inputRect.height), width=3)
+        screen.blit(boxSurf, inputRect.topleft)
+
+        displayText = inputText if inputText else "Enter Password"
+        color = (200, 200, 200) if inputText else (120, 120, 120)
+
+        textSurface = smallFont.render(displayText, True, color)
+        screen.blit(textSurface, (inputRect.x + 15, inputRect.y + 15))
+
+        if showCursor and inputText:
+            cursorX = inputRect.x + 15 + textSurface.get_width() + 2
+            cursorSurf = pygame.Surface((3, 30))
+            cursorSurf.fill((255, 255, 255))
+            screen.blit(cursorSurf, (cursorX, inputRect.y + 15))
+
+        if errorMessage:
+            errSurface = smallFont.render(errorMessage, True, (255, 80, 80))
+            errRect = errSurface.get_rect(center=(inputRect.centerx, inputRect.y - 40))
+            screen.blit(errSurface, errRect)
+
+        pygame.display.update()
+        clock.tick(60)
+        await asyncio.sleep(0)
+
 async def menuMain():
     global you
 
+    await checkPassword()
+    startMenuMusic()
+    
     duration = 1000
     start = pygame.time.get_ticks()
 
