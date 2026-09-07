@@ -28,13 +28,38 @@ buttonColor = (50, 50, 50)
 buttonHover = (80, 80, 80)
 textColor = (255, 255, 255)
 
+def isWeb():
+    return sys.platform == "emscripten"
+
+def saveColor(color):
+    if isWeb():
+        try:
+            import platform
+            platform.window.localStorage.setItem("color_save", f"{color[0]},{color[1]},{color[2]}")
+        except:
+            pass
+    else:
+        with open("Things/Data/color_save.txt", "w") as f:
+            f.write(f"{color[0]},{color[1]},{color[2]}")
+
 def loadColor():
-    try:
-        with open("Things/Data/color_save.txt", "r") as f:
-            parts = f.read().strip().split(",")
-            return (int(parts[0]), int(parts[1]), int(parts[2]))
-    except:
+    if isWeb():
+        try:
+            import platform
+            value = platform.window.localStorage.getItem("color_save")
+            if value:
+                parts = value.split(",")
+                return (int(parts[0]), int(parts[1]), int(parts[2]))
+        except:
+            pass
         return (30, 100, 180)
+    else:
+        try:
+            with open("Things/Data/color_save.txt", "r") as f:
+                parts = f.read().strip().split(",")
+                return (int(parts[0]), int(parts[1]), int(parts[2]))
+        except:
+            return (30, 100, 180)
 
 you = loadColor()
 
@@ -158,7 +183,7 @@ async def menuMain():
 
     await checkPassword()
     startMenuMusic()
-    
+
     duration = 1000
     start = pygame.time.get_ticks()
 
@@ -322,8 +347,7 @@ async def menuMain():
                     you = newColor
                     squareSurface = createSquareSurface(you, squareSize)
 
-                    with open("Things/Data/color_save.txt", "w") as f:
-                        f.write(f"{you[0]},{you[1]},{you[2]}")
+                    saveColor(you)
 
                 if rotatedRect.collidepoint(mousePos) and t >= 1 and not transitioning:
                     transitioning = True
