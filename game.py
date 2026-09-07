@@ -30,15 +30,23 @@ async def loadDeathFrames(screen):
 
     framesPath = "Things/Videos/deathframes"
     deathFrames = []
+    font = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 30)
 
     try:
         import os
         frameFiles = sorted(os.listdir(framesPath))
+        total = len(frameFiles)
 
-        for filename in frameFiles:
+        for i, filename in enumerate(frameFiles):
             frame = pygame.image.load(f"{framesPath}/{filename}").convert()
             frame = pygame.transform.scale(frame, (screen.get_width(), screen.get_height()))
             deathFrames.append(frame)
+
+            screen.fill((20, 20, 20))
+            text = font.render(f"Loading... {i + 1}/{total}", True, (255, 255, 255))
+            screen.blit(text, text.get_rect(center=screen.get_rect().center))
+            pygame.display.update()
+
             await asyncio.sleep(0)
     except:
         deathFrames = []
