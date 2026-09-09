@@ -2,6 +2,7 @@ import pygame
 import sys
 import random
 import asyncio
+import enemies as enemyModule
 import math
 
 moveSpeed = 6
@@ -118,20 +119,23 @@ async def die(screen, color):
         clock.tick(12)
         await asyncio.sleep(0)
 
-def spawnWave(waveNum, playerX, playerY):
-    count = 5
-    for _ in range(waveNum - 1):
-        count = math.ceil(count * 1.05)
+def spawnWave(count, playerX, playerY):
+    maxHP = 10
+    speed = baseEnemySpeed
 
-    maxHP = 10 + (waveNum // 5)
-    speed = baseEnemySpeed * (1 + 0.0005 * (waveNum - 1))
+    minCloseDist = min(250 + count * 6, 900)
+    maxCloseDist = min(400 + count * 8, 1200)
+
+    minFarDist = min(550 + count * 10, 1600)
+    maxFarDist = min(900 + count * 14, 2200)
 
     newEnemies = []
+
     for i in range(count):
         if i % 3 == 0:
-            dist = random.randint(250, 400)
+            dist = random.randint(minCloseDist, maxCloseDist)
         else:
-            dist = random.randint(550, 900)
+            dist = random.randint(minFarDist, maxFarDist)
 
         angle = random.uniform(0, math.pi * 2)
         x = playerX + math.cos(angle) * dist
@@ -148,12 +152,38 @@ def spawnWave(waveNum, playerX, playerY):
 
     return newEnemies
 
+def calculateWaveEnemyCount(waveNum):
+    count = 5
+
+    for _ in range(waveNum - 1):
+        count = math.ceil(count * 1.25)
+
+    return count
+
+def spawnWaveEnemies(waveNum, playerX, playerY):
+    totalCount = calculateWaveEnemyCount(waveNum)
+
+    if waveNum >= 3:
+        shooterCount = math.ceil(totalCount * 0.25)
+        defaultCount = totalCount - shooterCount
+    else:
+        defaultCount = totalCount
+        shooterCount = 0
+
+    newDefaults = spawnWave(defaultCount, playerX, playerY)
+    newShooters = enemyModule.spawnShooters(shooterCount, baseEnemySpeed, playerX, playerY) if shooterCount > 0 else []
+
+    return newDefaults, newShooters
+
 async def startGame(screen, color):
     clock = pygame.time.Clock()
     await loadDeathFrames(screen)
 
     pygame.mixer.music.load("Things/OST/waves1to10.ogg")
     pygame.mixer.music.play(-1)
+
+    shootChannel = pygame.mixer.Channel(2)
+    shootChannel.set_volume(0.6)
 
     wave = 1
     enemies = []
@@ -163,6 +193,8 @@ async def startGame(screen, color):
     nextWaveDelay = 600
 
     enemySurface = createSquareSurface((220, 40, 40), enemySize)
+    shooterSurface = enemyModule.createShooterSurface(enemyModule.shooterSize)
+    shooters = []
 
     squareSize = 75
     squareSurface = createSquareSurface(color, squareSize)
@@ -201,6 +233,7 @@ async def startGame(screen, color):
 
     punching = False
     punchStart = 0
+    punchHitPlayed = False
 
     punchStartDistance = fistLeash
     punchOutDuration = 90
@@ -224,6 +257,8 @@ async def startGame(screen, color):
     projectileSpeed = 14
     projectileCooldown = 100
     lastShotTime = -projectileCooldown
+
+    shooterProjectiles = []
 
     fadeInDuration = 500
     fadeStart = pygame.time.get_ticks()
@@ -268,6 +303,9 @@ async def startGame(screen, color):
                         dashStart = currentTime
                         lastDashTime = currentTime
 
+                        dashSound = pygame.mixer.Sound("Things/SFX/dashSFX.wav")
+                        dashSound.play()
+
             if event.type == pygame.MOUSEBUTTONDOWN:
                 if fistSpawned and not punching and currentTime - lastPunchTime >= punchCooldown:
                     mouseX, mouseY = pygame.mouse.get_pos()
@@ -294,6 +332,10 @@ async def startGame(screen, color):
                     punching = True
                     punchStart = currentTime
                     lastPunchTime = currentTime
+                    punchHitPlayed = False
+
+                    punchSound = pygame.mixer.Sound("Things/SFX/punchSwish.wav")
+                    punchSound.play()
 
                 elif not fistSpawned and currentTime - lastShotTime >= projectileCooldown:
                     mouseX, mouseY = pygame.mouse.get_pos()
@@ -318,6 +360,9 @@ async def startGame(screen, color):
                         "dy": dirY * projectileSpeed
                     })
                     lastShotTime = currentTime
+
+                    shootSound = pygame.mixer.Sound("Things/SFX/Shoot.wav")
+                    shootChannel.play(shootSound)
 
         keys = pygame.key.get_pressed()
 
@@ -367,6 +412,13 @@ async def startGame(screen, color):
                 e["x"] += (dx / dist) * e["speed"]
                 e["y"] += (dy / dist) * e["speed"]
 
+        for s in shooters:
+            enemyModule.updateShooterMovement(s, squareX, squareY, enemies, shooters)
+            newPellet = enemyModule.tryShooterShoot(s, currentTime, squareX, squareY)
+            
+            if newPellet:
+                shooterProjectiles.append(newPellet)
+
         for e in enemies:
             if abs(e["x"] - squareX) < (enemySize + squareSize) / 2 and \
             abs(e["y"] - squareY) < (enemySize + squareSize) / 2:
@@ -392,12 +444,22 @@ async def startGame(screen, color):
                         return
 
         if punching:
-            for e in enemies[:]:
+            for e in (enemies + shooters)[:]:
                 if abs(fistX - e["x"]) < (fistSize + enemySize) / 2 and \
                 abs(fistY - e["y"]) < (fistSize + enemySize) / 2:
                     e["hp"] -= 10
-                    if e["hp"] <= 0 and e in enemies:
-                        enemies.remove(e)
+
+                    if not punchHitPlayed:
+                        punchHitSound = pygame.mixer.Sound("Things/SFX/punchHit.wav")
+                        punchHitSound.play()
+                        punchHitPlayed = True
+
+                    if e["hp"] <= 0:
+                        if e in enemies:
+                            enemies.remove(e)
+                        if e in shooters:
+                            shooters.remove(e)
+
             punchElapsed = currentTime - punchStart
 
             if punchElapsed <= punchOutDuration:
@@ -471,27 +533,63 @@ async def startGame(screen, color):
                 projectiles.remove(p)
                 continue
 
-            for e in enemies[:]:
+            for e in (enemies + shooters)[:]:
                 if abs(p["x"] - e["x"]) < (projectileSize + enemySize) / 2 and \
                 abs(p["y"] - e["y"]) < (projectileSize + enemySize) / 2:
                     
                     e["hp"] -= 5
                     if p in projectiles:
                         projectiles.remove(p)
-                    if e["hp"] <= 0 and e in enemies:
-                        enemies.remove(e)
+                    if e["hp"] <= 0:
+                        if e in enemies:
+                            enemies.remove(e)
+                        if e in shooters:
+                            shooters.remove(e)
                     break
 
-        if wave == 1 and not enemies and not waitingForNextWave and currentTime - fadeStart > 800 and currentTime - fadeStart < 2000:
-            enemies = spawnWave(1, squareX, squareY)
+        for sp in shooterProjectiles[:]:
+            sp["x"] += sp["dx"]
+            sp["y"] += sp["dy"]
 
-        if not enemies and not waitingForNextWave and wave >= 1 and currentTime - fadeStart > 2000:
+            dist = math.sqrt((sp["x"] - squareX) ** 2 + (sp["y"] - squareY) ** 2)
+            if dist > 2000:
+                shooterProjectiles.remove(sp)
+                continue
+
+            if abs(sp["x"] - squareX) < (enemyModule.shooterProjectileSize + squareSize) / 2 and \
+            abs(sp["y"] - squareY) < (enemyModule.shooterProjectileSize + squareSize) / 2:
+                health -= 10
+                shooterProjectiles.remove(sp)
+
+                if health <= 0:
+                    health = 0
+                    pygame.mixer.music.stop()
+                    deathStart = pygame.time.get_ticks()
+
+                    while pygame.time.get_ticks() - deathStart < 250:
+                        for event in pygame.event.get():
+                            if event.type == pygame.QUIT:
+                                pygame.quit()
+                                sys.exit()
+
+                        pygame.display.update()
+                        await asyncio.sleep(0)
+                    await die(screen, color)
+                    return
+
+        if wave == 1 and not enemies and not shooters and not waitingForNextWave and currentTime - fadeStart > 800 and currentTime - fadeStart < 2000:
+            enemies, shooters = spawnWaveEnemies(wave, squareX, squareY)
+
+        if not enemies and not shooters and not waitingForNextWave and wave >= 1 and currentTime - fadeStart > 2000:
             waitingForNextWave = True
             waveClearTimer = currentTime
 
         if waitingForNextWave and currentTime - waveClearTimer >= nextWaveDelay:
+            if wave % 5 == 0:
+                health = maxHealth
+
             wave += 1
-            enemies = spawnWave(wave, squareX, squareY)
+            enemies, shooters = spawnWaveEnemies(wave, squareX, squareY)
             waitingForNextWave = False
 
             if wave == 11:
@@ -519,6 +617,12 @@ async def startGame(screen, color):
                             p["y"] - cameraY - projectileSize // 2, 
                             projectileSize, projectileSize))
 
+        for sp in shooterProjectiles:
+            pygame.draw.rect(screen, (255, 140, 0), 
+                            (sp["x"] - cameraX - enemyModule.shooterProjectileSize // 2, 
+                            sp["y"] - cameraY - enemyModule.shooterProjectileSize // 2, 
+                            enemyModule.shooterProjectileSize, enemyModule.shooterProjectileSize))
+
         if fistSpawned:
             tempFist = fistSurface.copy()
             tempFist.set_alpha(alpha)
@@ -529,8 +633,15 @@ async def startGame(screen, color):
             rect = enemySurface.get_rect(center = (e["x"] - cameraX, e["y"] - cameraY))
             screen.blit(enemySurface, rect)
 
+        for s in shooters:
+            rect = shooterSurface.get_rect(center = (s["x"] - cameraX, s["y"] - cameraY))
+            screen.blit(shooterSurface, rect)
+
         healthText = font.render(f"Health: {health}", True, (255, 255, 255))
         screen.blit(healthText, (20, 20))
+
+        enemiesLeftText = font.render(f"Enemies Left: {len(enemies) + len(shooters)}", True, (255, 255, 255))
+        screen.blit(enemiesLeftText, (20 + healthText.get_width() + 30, 20))
 
         waveText = font.render(f"Wave: {wave}", True, (255, 255, 255))
         screen.blit(waveText, (20, 55))
