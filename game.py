@@ -126,8 +126,8 @@ def spawnWave(count, playerX, playerY):
     minCloseDist = min(250 + count * 6, 900)
     maxCloseDist = min(400 + count * 8, 1200)
 
-    minFarDist = min(550 + count * 10, 1600)
-    maxFarDist = min(900 + count * 14, 2200)
+    minFarDist = min(900 + count * 14, 2200)
+    maxFarDist = min(1300 + count * 18, 2800)
 
     newEnemies = []
 
