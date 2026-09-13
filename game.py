@@ -268,6 +268,7 @@ async def startGame(screen, color):
     intermissionChannel = pygame.mixer.Channel(3)
     intermissionChannel.set_volume(0.8)
     intermissionSound = pygame.mixer.Sound("Things/OST/intermission.ogg")
+    mainMusicVolume = 1.0
 
     wave = 1
     enemies = []
@@ -531,7 +532,7 @@ async def startGame(screen, color):
         frozen = currentTime < freezeUntil
 
         if musicPausedForParry and currentTime >= freezeUntil:
-            pygame.mixer.music.unpause()
+            pygame.mixer.music.set_volume(mainMusicVolume)
             musicPausedForParry = False
 
         if not frozen:
@@ -675,7 +676,7 @@ async def startGame(screen, color):
                         screenFlashAlpha = screenFlashMaxAlpha
                         freezeUntil = currentTime + freezeDuration
 
-                        pygame.mixer.music.pause()
+                        pygame.mixer.music.set_volume(0.0)
                         musicPausedForParry = True
 
                         punchParried = True
@@ -863,8 +864,7 @@ async def startGame(screen, color):
                 purchasedThisIntermission = False
                 currentIntermissionCards = random.sample(list(upgradeDefinitions.keys()), k = min(cardCount, len(upgradeDefinitions)))
 
-                if pygame.mixer.music.get_busy():
-                    pygame.mixer.music.pause()
+                pygame.mixer.music.set_volume(0.0)
 
                 intermissionChannel.play(intermissionSound)
             else:
@@ -885,7 +885,7 @@ async def startGame(screen, color):
             if intermissionRemaining <= 0:
                 inIntermission = False
                 intermissionChannel.stop()
-                pygame.mixer.music.unpause()
+                pygame.mixer.music.set_volume(mainMusicVolume)
 
                 wave += 1
                 enemies, shooters = spawnWaveEnemies(wave, squareX, squareY)
