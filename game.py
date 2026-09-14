@@ -270,6 +270,9 @@ async def startGame(screen, color):
     intermissionSound = pygame.mixer.Sound("Things/OST/intermission.ogg")
     mainMusicVolume = 1.0
 
+    punchSwishChannel = pygame.mixer.Channel(4)
+    punchHitChannel = pygame.mixer.Channel(5)
+
     wave = 1
     enemies = []
     enemySize = 75
@@ -499,7 +502,7 @@ async def startGame(screen, color):
                     punchParried = False
 
                     punchSound = pygame.mixer.Sound("Things/SFX/punchSwish.wav")
-                    punchSound.play()
+                    punchSwishChannel.play(punchSound)
 
                 elif not fistSpawned and currentTime - lastShotTime >= projectileCooldown:
                     mouseX, mouseY = pygame.mouse.get_pos()
@@ -650,7 +653,7 @@ async def startGame(screen, color):
 
                     if not punchHitPlayed:
                         punchHitSound = pygame.mixer.Sound("Things/SFX/punchHit.wav")
-                        punchHitSound.play()
+                        punchHitChannel.play(punchHitSound)
                         punchHitPlayed = True
 
                     if e["hp"] <= 0:
