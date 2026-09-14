@@ -3,6 +3,7 @@ import sys
 import random
 import asyncio
 import enemies as enemyModule
+import statuses
 import math
 
 moveSpeed = 6
@@ -23,6 +24,11 @@ upgradeDefinitions = {
         "name": "Better Bullets",
         "cost": 50,
         "description": ["Bullets Knockback Enemies", "and have a faster firerate"]
+    },
+    "electricDashes": {
+        "name": "Electric Dashes",
+        "cost": 75,
+        "description": ["Dash Teleports You", "Electric Field Behind Dash"]
     }
 }
 
@@ -98,6 +104,47 @@ def wrapText(font, text, maxWidth):
 
 def lerp(start, end, t):
     return start + (end - start) * t
+
+def pointToSegmentDistance(px, py, x1, y1, x2, y2):
+    dx = x2 - x1
+    dy = y2 - y1
+    lengthSquared = dx * dx + dy * dy
+
+    if lengthSquared == 0:
+        return math.sqrt((px - x1) ** 2 + (py - y1) ** 2)
+
+    t = ((px - x1) * dx + (py - y1) * dy) / lengthSquared
+    t = max(0, min(1, t))
+
+    closestX = x1 + t * dx
+    closestY = y1 + t * dy
+
+    return math.sqrt((px - closestX) ** 2 + (py - closestY) ** 2)
+
+def generateLightningPoints(x1, y1, x2, y2, segments, jaggedness, seed):
+    rng = random.Random(seed)
+
+    dx = x2 - x1
+    dy = y2 - y1
+    length = math.sqrt(dx * dx + dy * dy)
+
+    if length == 0:
+        return [(x1, y1), (x2, y2)]
+
+    normalX = -dy / length
+    normalY = dx / length
+
+    points = [(x1, y1)]
+
+    for i in range(1, segments):
+        t = i / segments
+        baseX = x1 + dx * t
+        baseY = y1 + dy * t
+        offset = rng.uniform(-jaggedness, jaggedness)
+        points.append((baseX + normalX * offset, baseY + normalY * offset))
+
+    points.append((x2, y2))
+    return points
 
 def easeOut(t):
     return 1 - (1 - t) * (1 - t)
@@ -273,6 +320,11 @@ async def startGame(screen, color):
     punchSwishChannel = pygame.mixer.Channel(4)
     punchHitChannel = pygame.mixer.Channel(5)
 
+    parriedBulletChannel = pygame.mixer.Channel(6)
+    parriedBulletSound = pygame.mixer.Sound("Things/SFX/parried.wav")
+
+    parryClearRadius = 250
+
     wave = 1
     enemies = []
     enemySize = 75
@@ -318,6 +370,14 @@ async def startGame(screen, color):
     bulletKnockback = False
     knockbackAmount = 40
     knockbackFriction = 0.85
+
+    electricFields = []
+    electricFieldDuration = 500
+    electricFieldWidth = 14
+    electricFieldDamage = 5
+    electricFieldSegments = 7
+    electricFieldJaggedness = 18
+    electricFieldReshapeInterval = 60
 
     parriedBullets = []
     parriedBulletSpeed = 40
@@ -433,6 +493,7 @@ async def startGame(screen, color):
                 if event.key == pygame.K_q and not dashing and currentTime - lastDashTime >= dashCooldown:
                     dx = 0
                     dy = 0
+
                     if keys[pygame.K_a]: dx -= 1
                     if keys[pygame.K_d]: dx += 1
                     if keys[pygame.K_w]: dy -= 1
@@ -445,6 +506,23 @@ async def startGame(screen, color):
                         dashing = True
                         dashStart = currentTime
                         lastDashTime = currentTime
+
+                        if "electricDashes" in ownedUpgrades:
+                            dashFrames = dashDuration / 1000 * 60
+                            dashDistance = dashSpeed * dashFrames
+
+                            startX, startY = squareX, squareY
+                            squareX += dashDirX * dashDistance
+                            squareY += dashDirY * dashDistance
+
+                            electricFields.append({
+                                "x1": startX,
+                                "y1": startY,
+                                "x2": squareX,
+                                "y2": squareY,
+                                "startTime": currentTime,
+                                "hitTargets": set()
+                            })
 
                         dashSound = pygame.mixer.Sound("Things/SFX/dashSFX.wav")
                         dashSound.play()
@@ -540,14 +618,15 @@ async def startGame(screen, color):
 
         if not frozen:
             if dashing:
-                squareX += dashDirX * dashSpeed
-                squareY += dashDirY * dashSpeed
+                if "electricDashes" not in ownedUpgrades:
+                    squareX += dashDirX * dashSpeed
+                    squareY += dashDirY * dashSpeed
 
-                afterimages.append({
-                    "x": squareX,
-                    "y": squareY,
-                    "alpha": 160
-                })
+                    afterimages.append({
+                        "x": squareX,
+                        "y": squareY,
+                        "alpha": 160
+                    })
 
                 if currentTime - dashStart >= dashDuration:
                     dashing = False
@@ -595,8 +674,9 @@ async def startGame(screen, color):
 
                     dist = math.sqrt(dx*dx + dy*dy)
                     if dist > 0:
-                        e["x"] += (dx / dist) * e["speed"]
-                        e["y"] += (dy / dist) * e["speed"]
+                        effectiveSpeed = statuses.getEffectiveSpeed(e, currentTime)
+                        e["x"] += (dx / dist) * effectiveSpeed
+                        e["y"] += (dy / dist) * effectiveSpeed
 
         if not frozen:
             for s in shooters:
@@ -668,11 +748,17 @@ async def startGame(screen, color):
                 for sp in shooterProjectiles[:]:
                     if abs(fistX - sp["x"]) < (fistSize + enemyModule.shooterProjectileSize) / 2 and \
                     abs(fistY - sp["y"]) < (fistSize + enemyModule.shooterProjectileSize) / 2:
+                        parryX, parryY = sp["x"], sp["y"]
                         shooterProjectiles.remove(sp)
 
+                        for nearbySp in shooterProjectiles[:]:
+                            nearbyDist = math.sqrt((nearbySp["x"] - parryX) ** 2 + (nearbySp["y"] - parryY) ** 2)
+                            if nearbyDist <= parryClearRadius:
+                                shooterProjectiles.remove(nearbySp)
+
                         parriedBullets.append({
-                            "x": sp["x"],
-                            "y": sp["y"],
+                            "x": parryX,
+                            "y": parryY,
                             "target": sp.get("sourceShooter")
                         })
 
@@ -681,6 +767,8 @@ async def startGame(screen, color):
 
                         pygame.mixer.music.set_volume(0.0)
                         musicPausedForParry = True
+
+                        parriedBulletChannel.play(parriedBulletSound)
 
                         punchParried = True
                         break
@@ -855,6 +943,28 @@ async def startGame(screen, color):
                         if e in shooters:
                             shooters.remove(e)
 
+            for field in electricFields[:]:
+                if currentTime - field["startTime"] > electricFieldDuration:
+                    electricFields.remove(field)
+                    continue
+
+                for e in (enemies + shooters)[:]:
+                    eId = id(e)
+                    if eId in field["hitTargets"]:
+                        continue
+
+                    dist = pointToSegmentDistance(e["x"], e["y"], field["x1"], field["y1"], field["x2"], field["y2"])
+                    if dist <= electricFieldWidth / 2 + enemySize / 2:
+                        e["hp"] -= electricFieldDamage
+                        field["hitTargets"].add(eId)
+                        statuses.slowness(e, currentTime)
+
+                        if e["hp"] <= 0:
+                            if e in enemies:
+                                enemies.remove(e)
+                            if e in shooters:
+                                shooters.remove(e)
+
         if wave == 1 and not enemies and not shooters and not waitingForNextWave and currentTime - fadeStart > 800 and currentTime - fadeStart < 2000:
             enemies, shooters = spawnWaveEnemies(wave, squareX, squareY)
 
@@ -929,6 +1039,23 @@ async def startGame(screen, color):
                             (pb["x"] - cameraX - parriedBulletSize // 2, 
                             pb["y"] - cameraY - parriedBulletSize // 2, 
                             parriedBulletSize, parriedBulletSize))
+
+        for field in electricFields:
+            fieldElapsed = currentTime - field["startTime"]
+            fieldT = min(fieldElapsed / electricFieldDuration, 1)
+            fieldAlpha = int(lerp(255, 0, fieldT))
+
+            reshapeSeed = id(field) + (currentTime // electricFieldReshapeInterval)
+            boltPoints = generateLightningPoints(
+                field["x1"], field["y1"], field["x2"], field["y2"],
+                electricFieldSegments, electricFieldJaggedness, reshapeSeed
+            )
+
+            screenPoints = [(px - cameraX, py - cameraY) for px, py in boltPoints]
+
+            fieldSurf = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+            pygame.draw.lines(fieldSurf, (100, 220, 255, fieldAlpha), False, screenPoints, electricFieldWidth)
+            screen.blit(fieldSurf, (0, 0))
 
         if fistSpawned:
             tempFist = fistSurface.copy()
