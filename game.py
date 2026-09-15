@@ -27,7 +27,7 @@ upgradeDefinitions = {
     },
     "electricDashes": {
         "name": "Electric Dashes",
-        "cost": 75,
+        "cost": 50,
         "description": ["Dash Teleports You", "Electric Field Behind Dash"]
     }
 }
