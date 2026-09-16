@@ -78,7 +78,7 @@ def drawCard(surface, rect, alpha, scale, titleFont, bodyFont, name = None, cost
 
     scaledWidth = max(1, int(rect.width * scale))
     scaledHeight = max(1, int(rect.height * scale))
-    scaledSurf = pygame.transform.smoothscale(cardSurf, (scaledWidth, scaledHeight))
+    scaledSurf = pygame.transform.scale(cardSurf, (scaledWidth, scaledHeight))
 
     scaledRect = scaledSurf.get_rect(center=rect.center)
     surface.blit(scaledSurf, scaledRect)
@@ -323,6 +323,11 @@ async def startGame(screen, color):
     parriedBulletChannel = pygame.mixer.Channel(6)
     parriedBulletSound = pygame.mixer.Sound("Things/SFX/parried.wav")
 
+    dashSoundCached = pygame.mixer.Sound("Things/SFX/dashSFX.wav")
+    punchSwishSoundCached = pygame.mixer.Sound("Things/SFX/punchSwish.wav")
+    punchHitSoundCached = pygame.mixer.Sound("Things/SFX/punchHit.wav")
+    shootSoundCached = pygame.mixer.Sound("Things/SFX/Shoot.wav")
+
     parryClearRadius = 250
 
     wave = 1
@@ -524,8 +529,7 @@ async def startGame(screen, color):
                                 "hitTargets": set()
                             })
 
-                        dashSound = pygame.mixer.Sound("Things/SFX/dashSFX.wav")
-                        dashSound.play()
+                        dashSoundCached.play()
 
             if event.type == pygame.MOUSEBUTTONDOWN:
                 if inIntermission and not purchasedThisIntermission:
@@ -579,8 +583,7 @@ async def startGame(screen, color):
                     punchHitPlayed = False
                     punchParried = False
 
-                    punchSound = pygame.mixer.Sound("Things/SFX/punchSwish.wav")
-                    punchSwishChannel.play(punchSound)
+                    punchSwishChannel.play(punchSwishSoundCached)
 
                 elif not fistSpawned and currentTime - lastShotTime >= projectileCooldown:
                     mouseX, mouseY = pygame.mouse.get_pos()
@@ -606,8 +609,7 @@ async def startGame(screen, color):
                     })
                     lastShotTime = currentTime
 
-                    shootSound = pygame.mixer.Sound("Things/SFX/Shoot.wav")
-                    shootChannel.play(shootSound)
+                    shootChannel.play(shootSoundCached)
 
         keys = pygame.key.get_pressed()
         frozen = currentTime < freezeUntil
@@ -732,8 +734,7 @@ async def startGame(screen, color):
                     e["hp"] -= punchDamage
 
                     if not punchHitPlayed:
-                        punchHitSound = pygame.mixer.Sound("Things/SFX/punchHit.wav")
-                        punchHitChannel.play(punchHitSound)
+                        punchHitChannel.play(punchHitSoundCached)
                         punchHitPlayed = True
 
                     if e["hp"] <= 0:
@@ -840,8 +841,8 @@ async def startGame(screen, color):
                 p["x"] += p["dx"]
                 p["y"] += p["dy"]
 
-                dist = math.sqrt((p["x"] - squareX) ** 2 + (p["y"] - squareY) ** 2)
-                if dist > 2000:
+                distSquared = (p["x"] - squareX) ** 2 + (p["y"] - squareY) ** 2
+                if distSquared > 2000 ** 2:
                     projectiles.remove(p)
                     continue
 
@@ -870,8 +871,8 @@ async def startGame(screen, color):
                 sp["x"] += sp["dx"]
                 sp["y"] += sp["dy"]
 
-                dist = math.sqrt((sp["x"] - squareX) ** 2 + (sp["y"] - squareY) ** 2)
-                if dist > 2000:
+                distSquared = (sp["x"] - squareX) ** 2 + (sp["y"] - squareY) ** 2
+                if distSquared > 2000 ** 2:
                     shooterProjectiles.remove(sp)
                     continue
 
@@ -1043,7 +1044,7 @@ async def startGame(screen, color):
         for field in electricFields:
             fieldElapsed = currentTime - field["startTime"]
             fieldT = min(fieldElapsed / electricFieldDuration, 1)
-            fieldAlpha = int(lerp(255, 0, fieldT))
+            fadeFactor = 1 - fieldT
 
             reshapeSeed = id(field) + (currentTime // electricFieldReshapeInterval)
             boltPoints = generateLightningPoints(
@@ -1053,9 +1054,8 @@ async def startGame(screen, color):
 
             screenPoints = [(px - cameraX, py - cameraY) for px, py in boltPoints]
 
-            fieldSurf = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
-            pygame.draw.lines(fieldSurf, (100, 220, 255, fieldAlpha), False, screenPoints, electricFieldWidth)
-            screen.blit(fieldSurf, (0, 0))
+            boltColor = (int(100 * fadeFactor), int(220 * fadeFactor), int(255 * fadeFactor))
+            pygame.draw.lines(screen, boltColor, False, screenPoints, electricFieldWidth)
 
         if fistSpawned:
             tempFist = fistSurface.copy()
