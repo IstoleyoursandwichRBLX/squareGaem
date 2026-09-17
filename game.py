@@ -2,7 +2,10 @@ import pygame
 import sys
 import random
 import asyncio
-import enemies as enemyModule
+
+from Things.Enemies import shooters as enemyModule
+from Things.Enemies import chargers as chargerModule
+
 import statuses
 import math
 
@@ -283,24 +286,23 @@ def calculateWaveEnemyCount(waveNum):
     count = 5
 
     for _ in range(waveNum - 1):
-        count = math.ceil(count * 1.25)
+        count = math.ceil(count * 1.15)
 
     return count
 
-def spawnWaveEnemies(waveNum, playerX, playerY):
+def spawnWaveEnemies(waveNum, playerX, playerY, currentTime):
     totalCount = calculateWaveEnemyCount(waveNum)
 
-    if waveNum >= 3:
-        shooterCount = math.ceil(totalCount * 0.25)
-        defaultCount = totalCount - shooterCount
-    else:
-        defaultCount = totalCount
-        shooterCount = 0
+    shooterCount = math.ceil(totalCount * 0.20) if waveNum >= 3 else 0
+    chargerCount = max(1, math.ceil(totalCount * 0.05)) if waveNum >= 6 else 0
+
+    defaultCount = max(0, totalCount - shooterCount - chargerCount)
 
     newDefaults = spawnWave(defaultCount, playerX, playerY)
     newShooters = enemyModule.spawnShooters(shooterCount, baseEnemySpeed, playerX, playerY) if shooterCount > 0 else []
+    newChargers = chargerModule.spawnChargers(chargerCount, baseEnemySpeed, playerX, playerY, currentTime) if chargerCount > 0 else []
 
-    return newDefaults, newShooters
+    return newDefaults, newShooters, newChargers
 
 async def startGame(screen, color):
     clock = pygame.time.Clock()
@@ -401,7 +403,10 @@ async def startGame(screen, color):
 
     enemySurface = createSquareSurface((220, 40, 40), enemySize)
     shooterSurface = enemyModule.createShooterSurface(enemyModule.shooterSize)
+
     shooters = []
+    chargers = []
+    chargerSurface = chargerModule.createChargerSurface(chargerModule.chargerSize)
 
     squareSize = 75
     squareSurface = createSquareSurface(color, squareSize)
@@ -700,6 +705,8 @@ async def startGame(screen, color):
                 else:
                     s["knockbackX"] = 0
                     s["knockbackY"] = 0
+            for c in chargers:
+                chargerModule.updateChargerMovement(c, squareX, squareY, currentTime)
 
         for e in enemies:
             if abs(e["x"] - squareX) < (enemySize + squareSize) / 2 and \
@@ -727,6 +734,55 @@ async def startGame(screen, color):
                         await die(screen, color)
                         return
 
+        for c in chargers:
+            chargerHalfSize = (chargerModule.chargerSize + squareSize) / 2
+            if abs(c["x"] - squareX) < chargerHalfSize and abs(c["y"] - squareY) < chargerHalfSize:
+
+                dashInvincible = dashing and "betterDashes" in ownedUpgrades
+
+                if not dashInvincible:
+                    if c["chargeState"] == "charging":
+                        if currentTime - c["last_hit"] >= 500:
+                            health -= chargerModule.chargerChargeTouchDamage
+                            c["last_hit"] = currentTime
+                            c["chargeState"] = "idle"
+
+                            if health <= 0:
+                                health = 0
+                                pygame.mixer.music.stop()
+                                deathStart = pygame.time.get_ticks()
+
+                                while pygame.time.get_ticks() - deathStart < 250:
+                                    for event in pygame.event.get():
+                                        if event.type == pygame.QUIT:
+                                            pygame.quit()
+                                            sys.exit()
+
+                                    pygame.display.update()
+                                    await asyncio.sleep(0)
+                                await die(screen, color)
+                                return
+                    else:
+                        if currentTime - c["last_hit"] >= 2000:
+                            health -= chargerModule.chargerTouchDamage
+                            c["last_hit"] = currentTime
+
+                            if health <= 0:
+                                health = 0
+                                pygame.mixer.music.stop()
+                                deathStart = pygame.time.get_ticks()
+
+                                while pygame.time.get_ticks() - deathStart < 250:
+                                    for event in pygame.event.get():
+                                        if event.type == pygame.QUIT:
+                                            pygame.quit()
+                                            sys.exit()
+
+                                    pygame.display.update()
+                                    await asyncio.sleep(0)
+                                await die(screen, color)
+                                return
+
         if punching:
             for e in (enemies + shooters)[:]:
                 if abs(fistX - e["x"]) < (fistSize + enemySize) / 2 and \
@@ -742,6 +798,26 @@ async def startGame(screen, color):
                             enemies.remove(e)
                         if e in shooters:
                             shooters.remove(e)
+
+            for c in chargers[:]:
+                chargerHalfSize = (fistSize + chargerModule.chargerSize) / 2
+                if abs(fistX - c["x"]) < chargerHalfSize and abs(fistY - c["y"]) < chargerHalfSize:
+
+                    if c["chargeState"] == "charging":
+                        chargerModule.interruptChargeWithPunch(c, punchDirX, punchDirY)
+
+                        if not punchHitPlayed:
+                            punchHitChannel.play(punchHitSoundCached)
+                            punchHitPlayed = True
+                    else:
+                        c["hp"] -= punchDamage
+
+                        if not punchHitPlayed:
+                            punchHitChannel.play(punchHitSoundCached)
+                            punchHitPlayed = True
+
+                        if c["hp"] <= 0:
+                            chargers.remove(c)
 
             punchElapsed = currentTime - punchStart
 
@@ -867,6 +943,26 @@ async def startGame(screen, color):
                                 shooters.remove(e)
                         break
 
+                if p in projectiles:
+                    for c in chargers[:]:
+                        chargerHalfSize = (projectileSize + chargerModule.chargerSize) / 2
+                        if abs(p["x"] - c["x"]) < chargerHalfSize and abs(p["y"] - c["y"]) < chargerHalfSize:
+
+                            if c["chargeState"] != "charging":
+                                c["hp"] -= 5
+
+                                if bulletKnockback:
+                                    knockbackLength = math.sqrt(p["dx"] ** 2 + p["dy"] ** 2)
+                                    if knockbackLength > 0:
+                                        c["knockbackX"] = c.get("knockbackX", 0) + (p["dx"] / knockbackLength) * knockbackAmount
+                                        c["knockbackY"] = c.get("knockbackY", 0) + (p["dy"] / knockbackLength) * knockbackAmount
+
+                                if c["hp"] <= 0:
+                                    chargers.remove(c)
+
+                            projectiles.remove(p)
+                            break
+
             for sp in shooterProjectiles[:]:
                 sp["x"] += sp["dx"]
                 sp["y"] += sp["dy"]
@@ -966,10 +1062,27 @@ async def startGame(screen, color):
                             if e in shooters:
                                 shooters.remove(e)
 
-        if wave == 1 and not enemies and not shooters and not waitingForNextWave and currentTime - fadeStart > 800 and currentTime - fadeStart < 2000:
-            enemies, shooters = spawnWaveEnemies(wave, squareX, squareY)
+                for c in chargers[:]:
+                    if c["chargeState"] == "charging":
+                        continue
 
-        if not enemies and not shooters and not waitingForNextWave and not inIntermission and wave >= 1 and currentTime - fadeStart > 2000:
+                    cId = id(c)
+                    if cId in field["hitTargets"]:
+                        continue
+
+                    dist = pointToSegmentDistance(c["x"], c["y"], field["x1"], field["y1"], field["x2"], field["y2"])
+                    if dist <= electricFieldWidth / 2 + chargerModule.chargerSize / 2:
+                        c["hp"] -= electricFieldDamage
+                        field["hitTargets"].add(cId)
+                        statuses.slowness(c, currentTime)
+
+                        if c["hp"] <= 0:
+                            chargers.remove(c)
+
+        if wave == 1 and not enemies and not shooters and not chargers and not waitingForNextWave and currentTime - fadeStart > 800 and currentTime - fadeStart < 2000:
+            enemies, shooters, chargers = spawnWaveEnemies(wave, squareX, squareY, currentTime)
+
+        if not enemies and not shooters and not chargers and not waitingForNextWave and not inIntermission and wave >= 1 and currentTime - fadeStart > 2000:
             if wave % 5 == 0:
                 health = maxHealth
                 inIntermission = True
@@ -987,7 +1100,7 @@ async def startGame(screen, color):
 
         if waitingForNextWave and currentTime - waveClearTimer >= nextWaveDelay:
             wave += 1
-            enemies, shooters = spawnWaveEnemies(wave, squareX, squareY)
+            enemies, shooters, chargers = spawnWaveEnemies(wave, squareX, squareY, currentTime)
             waitingForNextWave = False
 
             if wave == 11:
@@ -1002,7 +1115,7 @@ async def startGame(screen, color):
                 pygame.mixer.music.set_volume(mainMusicVolume)
 
                 wave += 1
-                enemies, shooters = spawnWaveEnemies(wave, squareX, squareY)
+                enemies, shooters, chargers = spawnWaveEnemies(wave, squareX, squareY, currentTime)
 
                 if wave == 11:
                     pygame.mixer.music.stop()
@@ -1071,10 +1184,25 @@ async def startGame(screen, color):
             rect = shooterSurface.get_rect(center = (s["x"] - cameraX, s["y"] - cameraY))
             screen.blit(shooterSurface, rect)
 
+        for c in chargers[:]:
+            for img in c["chargeAfterimages"][:]:
+                img["alpha"] -= 12
+                if img["alpha"] <= 0:
+                    c["chargeAfterimages"].remove(img)
+
+            for img in c["chargeAfterimages"]:
+                temp = chargerSurface.copy()
+                temp.set_alpha(img["alpha"])
+                rect = temp.get_rect(center=(img["x"] - cameraX, img["y"] - cameraY))
+                screen.blit(temp, rect)
+
+            rect = chargerSurface.get_rect(center=(c["x"] - cameraX, c["y"] - cameraY))
+            screen.blit(chargerSurface, rect)
+
         healthText = font.render(f"Health: {health}", True, (255, 255, 255))
         screen.blit(healthText, (20, 20))
 
-        enemiesLeftText = font.render(f"Enemies Left: {len(enemies) + len(shooters)}", True, (255, 255, 255))
+        enemiesLeftText = font.render(f"Enemies Left: {len(enemies) + len(shooters) + len(chargers)}", True, (255, 255, 255))
         screen.blit(enemiesLeftText, (20 + healthText.get_width() + 30, 20))
 
         waveText = font.render(f"Wave: {wave}", True, (255, 255, 255))
