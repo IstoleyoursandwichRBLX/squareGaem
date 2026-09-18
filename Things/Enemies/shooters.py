@@ -53,13 +53,13 @@ def updateShooterMovement(shooter, playerX, playerY, defaultEnemies, allShooters
     moveY = 0
 
     nearestDefault = None
-    nearestDist = None
+    nearestDistSquared = None
     for e in defaultEnemies:
         edx = e["x"] - shooter["x"]
         edy = e["y"] - shooter["y"]
-        edist = math.sqrt(edx * edx + edy * edy)
-        if nearestDist is None or edist < nearestDist:
-            nearestDist = edist
+        edistSquared = edx * edx + edy * edy
+        if nearestDistSquared is None or edistSquared < nearestDistSquared:
+            nearestDistSquared = edistSquared
             nearestDefault = e
 
     if distToPlayer < shooterPreferredMinDistance:

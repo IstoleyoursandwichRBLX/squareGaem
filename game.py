@@ -11,6 +11,7 @@ import math
 
 moveSpeed = 6
 baseEnemySpeed = moveSpeed * 0.75
+hudTextCache = {}
 
 upgradeDefinitions = {
     "betterDashes": {
@@ -43,45 +44,56 @@ def createSquareSurface(color, size):
     
     return surface
 
-def drawCard(surface, rect, alpha, scale, titleFont, bodyFont, name = None, cost = None, descriptionLines = None, owned = False):
-    cardSurf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+def renderCachedText(cache, key, font, text, color):
+    cached = cache.get(key)
+    if cached is not None and cached[0] == text:
+        return cached[1]
 
-    pygame.draw.rect(cardSurf, (40, 40, 40, alpha), (0, 0, rect.width, rect.height), border_radius=20)
-    pygame.draw.rect(cardSurf, (255, 255, 255, alpha), (0, 0, rect.width, rect.height), width=4, border_radius=20)
+    surface = font.render(text, True, color)
+    cache[key] = (text, surface)
+    return surface
+
+def buildCardSurface(width, height, titleFont, bodyFont, name = None, cost = None, descriptionLines = None, owned = False):
+    cardSurf = pygame.Surface((width, height), pygame.SRCALPHA)
+
+    pygame.draw.rect(cardSurf, (40, 40, 40, 255), (0, 0, width, height), border_radius=20)
+    pygame.draw.rect(cardSurf, (255, 255, 255, 255), (0, 0, width, height), width=4, border_radius=20)
 
     if name:
         nameSurface = titleFont.render(name, True, (255, 255, 255))
-        nameSurface.set_alpha(alpha)
-        nameRect = nameSurface.get_rect(center = (rect.width // 2, 55))
+        nameRect = nameSurface.get_rect(center = (width // 2, 55))
         cardSurf.blit(nameSurface, nameRect)
 
     if descriptionLines:
-        maxTextWidth = rect.width - 30
+        maxTextWidth = width - 30
         wrappedLines = []
 
         for line in descriptionLines:
             wrappedLines.extend(wrapText(bodyFont, line, maxTextWidth))
 
         lineSpacing = 24
-        startY = rect.height // 2 - (len(wrappedLines) * lineSpacing) // 2
+        startY = height // 2 - (len(wrappedLines) * lineSpacing) // 2
 
         for i, line in enumerate(wrappedLines):
             lineSurface = bodyFont.render(line, True, (200, 200, 200))
-            lineSurface.set_alpha(alpha)
-            lineRect = lineSurface.get_rect(center = (rect.width // 2, startY + i * lineSpacing))
+            lineRect = lineSurface.get_rect(center = (width // 2, startY + i * lineSpacing))
             cardSurf.blit(lineSurface, lineRect)
 
     if cost is not None:
         costColor = (150, 150, 150) if owned else (120, 220, 120)
         costText = "Owned" if owned else f"£{cost}"
         costSurface = bodyFont.render(costText, True, costColor)
-        costSurface.set_alpha(alpha)
-        costRect = costSurface.get_rect(center=(rect.width // 2, rect.height - 40))
+        costRect = costSurface.get_rect(center=(width // 2, height - 40))
         cardSurf.blit(costSurface, costRect)
+
+    return cardSurf
+
+def blitScaledCard(surface, baseSurf, rect, alpha, scale):
+    baseSurf.set_alpha(alpha)
 
     scaledWidth = max(1, int(rect.width * scale))
     scaledHeight = max(1, int(rect.height * scale))
-    scaledSurf = pygame.transform.scale(cardSurf, (scaledWidth, scaledHeight))
+    scaledSurf = pygame.transform.scale(baseSurf, (scaledWidth, scaledHeight))
 
     scaledRect = scaledSurf.get_rect(center=rect.center)
     surface.blit(scaledSurf, scaledRect)
@@ -108,13 +120,13 @@ def wrapText(font, text, maxWidth):
 def lerp(start, end, t):
     return start + (end - start) * t
 
-def pointToSegmentDistance(px, py, x1, y1, x2, y2):
+def pointToSegmentDistanceSquared(px, py, x1, y1, x2, y2):
     dx = x2 - x1
     dy = y2 - y1
     lengthSquared = dx * dx + dy * dy
 
     if lengthSquared == 0:
-        return math.sqrt((px - x1) ** 2 + (py - y1) ** 2)
+        return (px - x1) ** 2 + (py - y1) ** 2
 
     t = ((px - x1) * dx + (py - y1) * dy) / lengthSquared
     t = max(0, min(1, t))
@@ -122,7 +134,7 @@ def pointToSegmentDistance(px, py, x1, y1, x2, y2):
     closestX = x1 + t * dx
     closestY = y1 + t * dy
 
-    return math.sqrt((px - closestX) ** 2 + (py - closestY) ** 2)
+    return (px - closestX) ** 2 + (py - closestY) ** 2
 
 def generateLightningPoints(x1, y1, x2, y2, segments, jaggedness, seed):
     rng = random.Random(seed)
@@ -211,6 +223,7 @@ async def die(screen, color):
     retryTextDelay = 1000
     retryFadeDuration = 500
     retryAlpha = 0
+    retryTextSurface = renderTextWithOutline(retryFont, "Press SPACE to Retry", (255, 255, 255), (0, 0, 0), outlineWidth = 3)
 
     while True:
         currentTime = pygame.time.get_ticks()
@@ -241,9 +254,8 @@ async def die(screen, color):
             screen.blit(text, text.get_rect(center=screen.get_rect().center))
 
         if retryAlpha > 0:
-            retryText = renderTextWithOutline(retryFont, "Press SPACE to Retry", (255, 255, 255), (0, 0, 0), outlineWidth = 3)
-            retryText.set_alpha(retryAlpha)
-            screen.blit(retryText, retryText.get_rect(center=screen.get_rect().center))
+            retryTextSurface.set_alpha(retryAlpha)
+            screen.blit(retryTextSurface, retryTextSurface.get_rect(center=screen.get_rect().center))
 
         pygame.display.update()
         clock.tick(12)
@@ -355,6 +367,7 @@ async def startGame(screen, color):
 
     cardScaleSpeed = 0.18
     cardScale = [1.0] * cardCount
+    cardBaseSurfaces = {}
 
     totalCardsWidth = cardCount * cardWidth + (cardCount - 1) * cardSpacing
     cardsStartX = screen.get_width() // 2 - totalCardsWidth // 2
@@ -829,8 +842,8 @@ async def startGame(screen, color):
                         shooterProjectiles.remove(sp)
 
                         for nearbySp in shooterProjectiles[:]:
-                            nearbyDist = math.sqrt((nearbySp["x"] - parryX) ** 2 + (nearbySp["y"] - parryY) ** 2)
-                            if nearbyDist <= parryClearRadius:
+                            nearbyDistSquared = (nearbySp["x"] - parryX) ** 2 + (nearbySp["y"] - parryY) ** 2
+                            if nearbyDistSquared <= parryClearRadius ** 2:
                                 shooterProjectiles.remove(nearbySp)
 
                         parriedBullets.append({
@@ -1014,8 +1027,8 @@ async def startGame(screen, color):
                     shooters.remove(target)
 
                     for other in (enemies + shooters)[:]:
-                        otherDist = math.sqrt((other["x"] - splashX) ** 2 + (other["y"] - splashY) ** 2)
-                        if otherDist <= parrySplashRadius:
+                        otherDistSquared = (other["x"] - splashX) ** 2 + (other["y"] - splashY) ** 2
+                        if otherDistSquared <= parrySplashRadius ** 2:
                             other["hp"] -= parrySplashDamage
                             if other["hp"] <= 0:
                                 if other in enemies:
@@ -1050,8 +1063,8 @@ async def startGame(screen, color):
                     if eId in field["hitTargets"]:
                         continue
 
-                    dist = pointToSegmentDistance(e["x"], e["y"], field["x1"], field["y1"], field["x2"], field["y2"])
-                    if dist <= electricFieldWidth / 2 + enemySize / 2:
+                    distSquared = pointToSegmentDistanceSquared(e["x"], e["y"], field["x1"], field["y1"], field["x2"], field["y2"])
+                    if distSquared <= (electricFieldWidth / 2 + enemySize / 2) ** 2:
                         e["hp"] -= electricFieldDamage
                         field["hitTargets"].add(eId)
                         statuses.slowness(e, currentTime)
@@ -1070,8 +1083,8 @@ async def startGame(screen, color):
                     if cId in field["hitTargets"]:
                         continue
 
-                    dist = pointToSegmentDistance(c["x"], c["y"], field["x1"], field["y1"], field["x2"], field["y2"])
-                    if dist <= electricFieldWidth / 2 + chargerModule.chargerSize / 2:
+                    distSquared = pointToSegmentDistanceSquared(c["x"], c["y"], field["x1"], field["y1"], field["x2"], field["y2"])
+                    if distSquared <= (electricFieldWidth / 2 + chargerModule.chargerSize / 2) ** 2:
                         c["hp"] -= electricFieldDamage
                         field["hitTargets"].add(cId)
                         statuses.slowness(c, currentTime)
@@ -1127,14 +1140,12 @@ async def startGame(screen, color):
                 afterimages.remove(img)
 
         for img in afterimages:
-            temp = squareSurface.copy()
-            temp.set_alpha(img["alpha"])
-            rect = temp.get_rect(center=(img["x"] - cameraX, img["y"] - cameraY))
-            screen.blit(temp, rect)
+            squareSurface.set_alpha(img["alpha"])
+            rect = squareSurface.get_rect(center=(img["x"] - cameraX, img["y"] - cameraY))
+            screen.blit(squareSurface, rect)
 
-        tempSquare = squareSurface.copy()
-        tempSquare.set_alpha(alpha)
-        screen.blit(tempSquare, (squareRect.x - cameraX, squareRect.y - cameraY))
+        squareSurface.set_alpha(alpha)
+        screen.blit(squareSurface, (squareRect.x - cameraX, squareRect.y - cameraY))
 
         for p in projectiles:
             pygame.draw.rect(screen, (255, 255, 255), 
@@ -1171,10 +1182,9 @@ async def startGame(screen, color):
             pygame.draw.lines(screen, boltColor, False, screenPoints, electricFieldWidth)
 
         if fistSpawned:
-            tempFist = fistSurface.copy()
-            tempFist.set_alpha(alpha)
-            fistRect = tempFist.get_rect(center=(fistX - cameraX, fistY - cameraY))
-            screen.blit(tempFist, fistRect)
+            fistSurface.set_alpha(alpha)
+            fistRect = fistSurface.get_rect(center=(fistX - cameraX, fistY - cameraY))
+            screen.blit(fistSurface, fistRect)
 
         for e in enemies:
             rect = enemySurface.get_rect(center = (e["x"] - cameraX, e["y"] - cameraY))
@@ -1191,29 +1201,29 @@ async def startGame(screen, color):
                     c["chargeAfterimages"].remove(img)
 
             for img in c["chargeAfterimages"]:
-                temp = chargerSurface.copy()
-                temp.set_alpha(img["alpha"])
-                rect = temp.get_rect(center=(img["x"] - cameraX, img["y"] - cameraY))
-                screen.blit(temp, rect)
+                chargerSurface.set_alpha(img["alpha"])
+                rect = chargerSurface.get_rect(center=(img["x"] - cameraX, img["y"] - cameraY))
+                screen.blit(chargerSurface, rect)
 
+            chargerSurface.set_alpha(255)
             rect = chargerSurface.get_rect(center=(c["x"] - cameraX, c["y"] - cameraY))
             screen.blit(chargerSurface, rect)
 
-        healthText = font.render(f"Health: {health}", True, (255, 255, 255))
+        healthText = renderCachedText(hudTextCache, "health", font, f"Health: {health}", (255, 255, 255))
         screen.blit(healthText, (20, 20))
 
-        enemiesLeftText = font.render(f"Enemies Left: {len(enemies) + len(shooters) + len(chargers)}", True, (255, 255, 255))
+        enemiesLeftText = renderCachedText(hudTextCache, "enemiesLeft", font, f"Enemies Left: {len(enemies) + len(shooters) + len(chargers)}", (255, 255, 255))
         screen.blit(enemiesLeftText, (20 + healthText.get_width() + 30, 20))
 
-        waveText = font.render(f"Wave: {wave}", True, (255, 255, 255))
+        waveText = renderCachedText(hudTextCache, "wave", font, f"Wave: {wave}", (255, 255, 255))
         screen.blit(waveText, (20, 55))
 
-        moneyText = font.render(f"Money: £{money}", True, (255, 255, 255))
+        moneyText = renderCachedText(hudTextCache, "money", font, f"Money: £{money}", (255, 255, 255))
         screen.blit(moneyText, (20, 90))
 
         if inIntermission:
             secondsLeft = math.ceil(intermissionRemaining / 1000)
-            intermissionText = font.render(f"Intermission: {secondsLeft}", True, (255, 255, 255))
+            intermissionText = renderCachedText(hudTextCache, "intermission", font, f"Intermission: {secondsLeft}", (255, 255, 255))
             screen.blit(intermissionText, intermissionText.get_rect(midtop=(screen.get_width() // 2, 55)))
 
             timeSinceIntermissionStart = currentTime - intermissionStart
@@ -1245,13 +1255,18 @@ async def startGame(screen, color):
                     upgradeId = currentIntermissionCards[i] if i < len(currentIntermissionCards) else None
 
                     if upgradeId:
-                        upgradeInfo = upgradeDefinitions[upgradeId]
                         owned = upgradeId in ownedUpgrades
-                        drawCard(screen, cardRects[i], cardAlpha, cardScale[i], cardTitleFont, cardBodyFont,
+                        cacheKey = (upgradeId, owned)
+
+                        if cacheKey not in cardBaseSurfaces:
+                            upgradeInfo = upgradeDefinitions[upgradeId]
+                            cardBaseSurfaces[cacheKey] = buildCardSurface(
+                                cardWidth, cardHeight, cardTitleFont, cardBodyFont,
                                 name = upgradeInfo["name"], cost = upgradeInfo["cost"],
-                                descriptionLines = upgradeInfo["description"], owned = owned)
-                    else:
-                        drawCard(screen, cardRects[i], cardAlpha, cardScale[i], cardTitleFont, cardBodyFont)
+                                descriptionLines = upgradeInfo["description"], owned = owned
+                            )
+
+                        blitScaledCard(screen, cardBaseSurfaces[cacheKey], cardRects[i], cardAlpha, cardScale[i])
 
 
         if screenFlashAlpha > 0:

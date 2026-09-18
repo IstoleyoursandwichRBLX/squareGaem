@@ -197,6 +197,7 @@ async def menuMain():
     angle = 0
     squareSize = 220
     squareSurface = createSquareSurface(you, squareSize)
+    rotatedCache = {}
 
     squareRightX = 1600 + squareSize // 2
     squareLeftX = 50 + squareSize // 2
@@ -232,6 +233,7 @@ async def menuMain():
         "M1 - Shooting/Punching",
         "Q + W/A/S/D - Dash"
     ]
+    controlsLineSurfaces = [controlsFont.render(line, True, textColor) for line in controlsLines]
 
     while True:
         mousePos = pygame.mouse.get_pos()
@@ -311,7 +313,10 @@ async def menuMain():
             cursorTimer = 0
             showCursor = not showCursor
 
-        rotatedSquare = pygame.transform.rotate(squareSurface, -angle)
+        if angle not in rotatedCache:
+            rotatedCache[angle] = pygame.transform.rotate(squareSurface, -angle)
+
+        rotatedSquare = rotatedCache[angle]
         rotatedRect = rotatedSquare.get_rect(center=(squareX, 400 + squareSize // 2))
 
         for event in pygame.event.get():
@@ -354,6 +359,7 @@ async def menuMain():
                 if newColor:
                     you = newColor
                     squareSurface = createSquareSurface(you, squareSize)
+                    rotatedCache.clear()
 
                     saveColor(you)
 
@@ -380,10 +386,9 @@ async def menuMain():
 
         if uiAlpha > 0:
             lineSpacing = 26
-            startY = screen.get_height() - (len(controlsLines) * lineSpacing) - 20
+            startY = screen.get_height() - (len(controlsLineSurfaces) * lineSpacing) - 20
 
-            for i, line in enumerate(controlsLines):
-                lineSurface = controlsFont.render(line, True, textColor)
+            for i, lineSurface in enumerate(controlsLineSurfaces):
                 lineSurface.set_alpha(uiAlpha)
                 screen.blit(lineSurface, (20, startY + i * lineSpacing))
 
