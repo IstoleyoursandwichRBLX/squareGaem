@@ -2,6 +2,7 @@ import pygame
 import sys
 import random
 import asyncio
+import json
 
 from Things.Enemies import shooters as enemyModule
 from Things.Enemies import chargers as chargerModule
@@ -12,6 +13,51 @@ import math
 moveSpeed = 6
 baseEnemySpeed = moveSpeed * 0.75
 hudTextCache = {}
+
+saveFilePath = "Things/Data/save.json"
+
+def isWebPlatform():
+    return sys.platform == "emscripten"
+
+def saveGameData(wave, money, ownedUpgrades):
+    data = {
+        "wave": wave + 1,
+        "money": money,
+        "upgrades": list(ownedUpgrades)
+    }
+
+    if isWebPlatform():
+        try:
+            import platform
+            platform.window.localStorage.setItem("square_game_save", json.dumps(data))
+        except:
+            pass
+    else:
+        try:
+            with open(saveFilePath, "w") as f:
+                json.dump(data, f)
+        except:
+            pass
+
+def loadGameData():
+    if isWebPlatform():
+        try:
+            import platform
+            value = platform.window.localStorage.getItem("square_game_save")
+            if value:
+                return json.loads(value)
+        except:
+            pass
+        return None
+    else:
+        try:
+            with open(saveFilePath, "r") as f:
+                return json.load(f)
+        except:
+            return None
+
+def hasSaveGame():
+    return loadGameData() is not None
 
 upgradeDefinitions = {
     "betterDashes": {
@@ -87,6 +133,18 @@ def buildCardSurface(width, height, titleFont, bodyFont, name = None, cost = Non
         cardSurf.blit(costSurface, costRect)
 
     return cardSurf
+
+def buildSimpleButtonSurface(width, height, font, text):
+    buttonSurf = pygame.Surface((width, height), pygame.SRCALPHA)
+
+    pygame.draw.rect(buttonSurf, (40, 40, 40, 255), (0, 0, width, height), border_radius = 16)
+    pygame.draw.rect(buttonSurf, (255, 255, 255, 255), (0, 0, width, height), width = 4, border_radius = 16)
+
+    textSurface = font.render(text, True, (255, 255, 255))
+    textRect = textSurface.get_rect(center=(width // 2, height // 2))
+    buttonSurf.blit(textSurface, textRect)
+
+    return buttonSurf
 
 def blitScaledCard(surface, baseSurf, rect, alpha, scale):
     baseSurf.set_alpha(alpha)
@@ -316,7 +374,7 @@ def spawnWaveEnemies(waveNum, playerX, playerY, currentTime):
 
     return newDefaults, newShooters, newChargers
 
-async def startGame(screen, color):
+async def startGame(screen, color, loadSave = False):
     clock = pygame.time.Clock()
     await loadDeathFrames(screen)
 
@@ -345,6 +403,7 @@ async def startGame(screen, color):
     parryClearRadius = 250
 
     wave = 1
+    initialSpawnDone = False
     enemies = []
     enemySize = 75
     waveClearTimer = 0
@@ -377,6 +436,21 @@ async def startGame(screen, color):
         pygame.Rect(cardsStartX + i * (cardWidth + cardSpacing), cardY, cardWidth, cardHeight)
         for i in range(cardCount)
     ]
+
+    saveButtonWidth = 320
+    saveButtonHeight = 70
+    saveButtonY = cardY + cardHeight + 70
+    saveButtonRect = pygame.Rect(0, 0, saveButtonWidth, saveButtonHeight)
+    saveButtonRect.center = (screen.get_width() // 2, saveButtonY + saveButtonHeight // 2)
+
+    saveButtonScale = 1.0
+    saveButtonScaleSpeed = 0.18
+    saveButtonFont = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 18)
+    saveButtonSurface = buildSimpleButtonSurface(saveButtonWidth, saveButtonHeight, saveButtonFont, "Save Game")
+
+    saveConfirmAlpha = 0
+    saveConfirmFont = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 16)
+    saveConfirmSurface = saveConfirmFont.render("Saved!", True, (120, 220, 120))
 
     cardTitleFont = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 15)
     cardBodyFont = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 12)
@@ -483,8 +557,29 @@ async def startGame(screen, color):
     projectileSpeed = 14
     projectileCooldown = 100
     lastShotTime = -projectileCooldown
-
     shooterProjectiles = []
+
+    def applyUpgradeEffects(upgradeId):
+        nonlocal dashCooldown, dashSpeed, punchDamage, projectileCooldown, bulletKnockback
+
+        if upgradeId == "betterDashes":
+            dashCooldown = 250
+            dashSpeed = 50
+        elif upgradeId == "betterFists":
+            punchDamage = 20
+        elif upgradeId == "betterBullets":
+            projectileCooldown = 75
+            bulletKnockback = True
+
+    if loadSave:
+        savedData = loadGameData()
+        if savedData:
+            wave = savedData.get("wave", 1)
+            money = savedData.get("money", 0)
+            ownedUpgrades = set(savedData.get("upgrades", []))
+
+            for upgradeId in ownedUpgrades:
+                applyUpgradeEffects(upgradeId)
 
     fadeInDuration = 500
     fadeStart = pygame.time.get_ticks()
@@ -550,28 +645,25 @@ async def startGame(screen, color):
                         dashSoundCached.play()
 
             if event.type == pygame.MOUSEBUTTONDOWN:
-                if inIntermission and not purchasedThisIntermission:
+                if inIntermission:
                     mouseX, mouseY = pygame.mouse.get_pos()
 
-                    for i in range(cardCount):
-                        if i < len(currentIntermissionCards) and cardRects[i].collidepoint((mouseX, mouseY)):
-                            upgradeId = currentIntermissionCards[i]
+                    if not purchasedThisIntermission:
+                        for i in range(cardCount):
+                            if i < len(currentIntermissionCards) and cardRects[i].collidepoint((mouseX, mouseY)):
+                                upgradeId = currentIntermissionCards[i]
 
-                            if upgradeId not in ownedUpgrades and money >= upgradeDefinitions[upgradeId]["cost"]:
-                                money -= upgradeDefinitions[upgradeId]["cost"]
-                                ownedUpgrades.add(upgradeId)
-                                purchasedThisIntermission = True
+                                if upgradeId not in ownedUpgrades and money >= upgradeDefinitions[upgradeId]["cost"]:
+                                    money -= upgradeDefinitions[upgradeId]["cost"]
+                                    ownedUpgrades.add(upgradeId)
+                                    purchasedThisIntermission = True
+                                    applyUpgradeEffects(upgradeId)
 
-                                if upgradeId == "betterDashes":
-                                    dashCooldown = 250
-                                    dashSpeed = 50
-                                elif upgradeId == "betterFists":
-                                    punchDamage = 20
-                                elif upgradeId == "betterBullets":
-                                    projectileCooldown = 75
-                                    bulletKnockback = True
+                                break
 
-                            break
+                    if saveButtonRect.collidepoint((mouseX, mouseY)):
+                        saveGameData(wave, money, ownedUpgrades)
+                        saveConfirmAlpha = 255
 
                 if fistSpawned and not punching and currentTime - lastPunchTime >= punchCooldown:
                     mouseX, mouseY = pygame.mouse.get_pos()
@@ -1092,8 +1184,9 @@ async def startGame(screen, color):
                         if c["hp"] <= 0:
                             chargers.remove(c)
 
-        if wave == 1 and not enemies and not shooters and not chargers and not waitingForNextWave and currentTime - fadeStart > 800 and currentTime - fadeStart < 2000:
+        if not initialSpawnDone and not enemies and not shooters and not chargers and not waitingForNextWave and currentTime - fadeStart > 800 and currentTime - fadeStart < 2000:
             enemies, shooters, chargers = spawnWaveEnemies(wave, squareX, squareY, currentTime)
+            initialSpawnDone = True
 
         if not enemies and not shooters and not chargers and not waitingForNextWave and not inIntermission and wave >= 1 and currentTime - fadeStart > 2000:
             if wave % 5 == 0:
@@ -1267,7 +1360,34 @@ async def startGame(screen, color):
                             )
 
                         blitScaledCard(screen, cardBaseSurfaces[cacheKey], cardRects[i], cardAlpha, cardScale[i])
+            saveButtonDelay = cardCount * cardFadeInStagger
+            if timeSinceIntermissionStart < saveButtonDelay:
+                saveButtonAlpha = 0
+            elif timeSinceIntermissionStart < saveButtonDelay + cardFadeInDuration:
+                fadeT = (timeSinceIntermissionStart - saveButtonDelay) / cardFadeInDuration
+                fadeT = easeOut(fadeT)
+                saveButtonAlpha = int(lerp(0, 255, fadeT))
+            else:
+                saveButtonAlpha = 255
 
+            if intermissionRemaining <= cardFadeOutDuration:
+                outT = 1 - (intermissionRemaining / cardFadeOutDuration)
+                outT = easeOut(outT)
+                outAlpha = int(lerp(255, 0, outT))
+                saveButtonAlpha = min(saveButtonAlpha, outAlpha)
+
+            saveButtonHovering = saveButtonRect.collidepoint(mousePos) and saveButtonAlpha >= 255
+            saveButtonTargetScale = 1.15 if saveButtonHovering else 1.0
+            saveButtonScale += (saveButtonTargetScale - saveButtonScale) * saveButtonScaleSpeed
+
+            if saveButtonAlpha > 0:
+                blitScaledCard(screen, saveButtonSurface, saveButtonRect, saveButtonAlpha, saveButtonScale)
+
+        if saveConfirmAlpha > 0:
+            saveConfirmSurface.set_alpha(saveConfirmAlpha)
+            confirmRect = saveConfirmSurface.get_rect(center=(saveButtonRect.centerx, saveButtonRect.bottom + 25))
+            screen.blit(saveConfirmSurface, confirmRect)
+            saveConfirmAlpha = max(0, saveConfirmAlpha - 4)
 
         if screenFlashAlpha > 0:
             flashSurface = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
