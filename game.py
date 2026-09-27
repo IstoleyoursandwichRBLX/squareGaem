@@ -460,10 +460,9 @@ async def startGame(screen, color, loadSave = False):
     cardTitleFont = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 15)
     cardBodyFont = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 12)
 
-    money = 100
+    money = 0
     ownedUpgrades = set()
     currentIntermissionCards = []
-    purchasedThisIntermission = False
 
     punchDamage = 10
     bulletKnockback = False
@@ -488,6 +487,7 @@ async def startGame(screen, color, loadSave = False):
     screenFlashMaxAlpha = 100
     screenFlashDuration = 750
     screenFlashDecay = screenFlashMaxAlpha / (screenFlashDuration / 1000 * 60)
+    screenFlashSurface = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
 
     freezeUntil = 0
     freezeDuration = 500
@@ -551,6 +551,7 @@ async def startGame(screen, color, loadSave = False):
         "Things/Images/umbrellaJoust.png"
     )
 
+    umbrellaRotationCache = {}
     umbrellaEnabled = False
     umbrellaJoustMode = False
 
@@ -690,18 +691,16 @@ async def startGame(screen, color, loadSave = False):
                 if inIntermission:
                     mouseX, mouseY = pygame.mouse.get_pos()
 
-                    if not purchasedThisIntermission:
-                        for i in range(cardCount):
-                            if i < len(currentIntermissionCards) and cardRects[i].collidepoint((mouseX, mouseY)):
-                                upgradeId = currentIntermissionCards[i]
+                    for i in range(cardCount):
+                        if i < len(currentIntermissionCards) and cardRects[i].collidepoint((mouseX, mouseY)):
+                            upgradeId = currentIntermissionCards[i]
 
-                                if upgradeId not in ownedUpgrades and money >= upgradeDefinitions[upgradeId]["cost"]:
-                                    money -= upgradeDefinitions[upgradeId]["cost"]
-                                    ownedUpgrades.add(upgradeId)
-                                    purchasedThisIntermission = True
-                                    applyUpgradeEffects(upgradeId)
+                            if upgradeId not in ownedUpgrades and money >= upgradeDefinitions[upgradeId]["cost"]:
+                                money -= upgradeDefinitions[upgradeId]["cost"]
+                                ownedUpgrades.add(upgradeId)
+                                applyUpgradeEffects(upgradeId)
 
-                                break
+                            break
 
                     if saveButtonRect.collidepoint((mouseX, mouseY)):
                         saveGameData(wave, money, ownedUpgrades)
@@ -1230,9 +1229,10 @@ async def startGame(screen, color, loadSave = False):
                         await die(screen, color)
                         return
 
+            aliveShooterIds = {id(shooter) for shooter in shooters}
             for pb in parriedBullets[:]:
                 target = pb.get("target")
-                targetAlive = target is not None and any(s is target for s in shooters)
+                targetAlive = target is not None and id(target) in aliveShooterIds
 
                 if not targetAlive:
                     parriedBullets.remove(pb)
@@ -1243,18 +1243,39 @@ async def startGame(screen, color, loadSave = False):
                 dist = math.sqrt(dirX * dirX + dirY * dirY)
 
                 if dist <= parriedBulletSpeed:
-                    splashX, splashY = target["x"], target["y"]
-                    shooters.remove(target)
+                    targetIndex = None
+
+                    for i, shooter in enumerate(shooters):
+                        if shooter is target:
+                            targetIndex = i
+                            break
+
+                    if targetIndex is None:
+                        parriedBullets.remove(pb)
+                        continue
+
+                    splashX = target["x"]
+                    splashY = target["y"]
+
+                    shooters.pop(targetIndex)
+                    aliveShooterIds.discard(id(target))
 
                     for other in (enemies + shooters)[:]:
-                        otherDistSquared = (other["x"] - splashX) ** 2 + (other["y"] - splashY) ** 2
+                        otherDistSquared = (
+                            (other["x"] - splashX) ** 2 +
+                            (other["y"] - splashY) ** 2
+                        )
+
                         if otherDistSquared <= parrySplashRadius ** 2:
                             other["hp"] -= parrySplashDamage
+
                             if other["hp"] <= 0:
                                 if other in enemies:
                                     enemies.remove(other)
+
                                 if other in shooters:
                                     shooters.remove(other)
+                                    aliveShooterIds.discard(id(other))
 
                     parriedBullets.remove(pb)
                     continue
@@ -1334,11 +1355,23 @@ async def startGame(screen, color, loadSave = False):
                 inIntermission = True
                 intermissionStart = currentTime
                 money += 50
-                purchasedThisIntermission = False
+
+                projectiles.clear()
+                shooterProjectiles.clear()
+                parriedBullets.clear()
+                electricFields.clear()
+                afterimages.clear()
+
+                dashing = False
+                punching = False
+                returning = False
+
+                screenFlashAlpha = 0
+                freezeUntil = 0
+                musicPausedForParry = False
                 currentIntermissionCards = random.sample(list(upgradeDefinitions.keys()), k = min(cardCount, len(upgradeDefinitions)))
 
                 pygame.mixer.music.set_volume(0.0)
-
                 intermissionChannel.play(intermissionSound)
             else:
                 waitingForNextWave = True
@@ -1416,31 +1449,28 @@ async def startGame(screen, color, loadSave = False):
 
         if fistSpawned:
             if umbrellaEnabled:
-                umbrellaSurface = (
-                    umbrellaJoustSurface
-                    if umbrellaJoustMode
-                    else umbrellaNormalSurface
-                )
-                umbrellaAngle = -math.degrees(
-                    math.atan2(umbrellaAimY, umbrellaAimX)
-                ) - 90
+                umbrellaAngle = -math.degrees(math.atan2(umbrellaAimY, umbrellaAimX)) - 90
 
                 if umbrellaJoustMode:
                     umbrellaAngle += 180
 
-                rotatedUmbrella = pygame.transform.rotate(
-                    umbrellaSurface,
-                    umbrellaAngle
-                )
+                cachedAngle = int(round(umbrellaAngle / 5) * 5) % 360
+                cacheKey = (umbrellaJoustMode, cachedAngle)
 
+                if cacheKey not in umbrellaRotationCache:
+                    umbrellaSurface = (
+                        umbrellaJoustSurface
+                        if umbrellaJoustMode
+                        else umbrellaNormalSurface
+                    )
+
+                    umbrellaRotationCache[cacheKey] = pygame.transform.rotate(umbrellaSurface, cachedAngle)
+
+                rotatedUmbrella = umbrellaRotationCache[cacheKey]
                 rotatedUmbrella.set_alpha(alpha)
 
-                umbrellaRect = rotatedUmbrella.get_rect(
-                    center=(fistX - cameraX, fistY - cameraY)
-                )
-
+                umbrellaRect = rotatedUmbrella.get_rect(center = (fistX - cameraX, fistY - cameraY))
                 screen.blit(rotatedUmbrella, umbrellaRect)
-
             else:
                 fistSurface.set_alpha(alpha)
 
@@ -1561,9 +1591,9 @@ async def startGame(screen, color, loadSave = False):
             saveConfirmAlpha = max(0, saveConfirmAlpha - 4)
 
         if screenFlashAlpha > 0:
-            flashSurface = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
-            flashSurface.fill((255, 255, 255, int(screenFlashAlpha)))
-            screen.blit(flashSurface, (0, 0))
+            screenFlashSurface.fill((255, 255, 255, int(screenFlashAlpha)))
+            screen.blit(screenFlashSurface, (0, 0))
+
             screenFlashAlpha = max(0, screenFlashAlpha - screenFlashDecay)
 
         pygame.display.update()
