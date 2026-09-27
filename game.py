@@ -79,6 +79,11 @@ upgradeDefinitions = {
         "name": "Electric Dashes",
         "cost": 75,
         "description": ["Dash Teleports You", "Electric Field Behind Dash"]
+    },
+    "umbrella": {
+        "name": "Umbrella",
+        "cost": 100,
+        "description": ["Replaces Fists with Umbrella.", "Press R to Change Modes"]
     }
 }
 
@@ -455,7 +460,7 @@ async def startGame(screen, color, loadSave = False):
     cardTitleFont = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 15)
     cardBodyFont = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 12)
 
-    money = 0
+    money = 100
     ownedUpgrades = set()
     currentIntermissionCards = []
     purchasedThisIntermission = False
@@ -524,9 +529,37 @@ async def startGame(screen, color, loadSave = False):
     fistSize = 35
     fistSurface = createSquareSurface(color, fistSize)
 
+    def loadUmbrellaSurface(imagePath):
+        surface = pygame.image.load(imagePath).convert_alpha()
+
+        scale = 135 / max(surface.get_width(), surface.get_height())
+
+        return pygame.transform.smoothscale(
+            surface,
+            (
+                int(surface.get_width() * scale),
+                int(surface.get_height() * scale)
+            )
+        )
+
+
+    umbrellaNormalSurface = loadUmbrellaSurface(
+        "Things/Images/umbrellaNormal.png"
+    )
+
+    umbrellaJoustSurface = loadUmbrellaSurface(
+        "Things/Images/umbrellaJoust.png"
+    )
+
+    umbrellaEnabled = False
+    umbrellaJoustMode = False
+
+    umbrellaDeflectRadius = 75
+    umbrellaAimX = 0
+    umbrellaAimY = -1
+
     fistSpawned = False
     fistX = squareX
-
     fistY = squareY
     fistLeash = 150
 
@@ -560,7 +593,7 @@ async def startGame(screen, color, loadSave = False):
     shooterProjectiles = []
 
     def applyUpgradeEffects(upgradeId):
-        nonlocal dashCooldown, dashSpeed, punchDamage, projectileCooldown, bulletKnockback
+        nonlocal dashCooldown, dashSpeed, punchDamage, projectileCooldown, bulletKnockback, umbrellaEnabled, umbrellaJoustMode
 
         if upgradeId == "betterDashes":
             dashCooldown = 250
@@ -570,6 +603,9 @@ async def startGame(screen, color, loadSave = False):
         elif upgradeId == "betterBullets":
             projectileCooldown = 75
             bulletKnockback = True
+        elif upgradeId == "umbrella":
+            umbrellaEnabled = True
+            umbrellaJoustMode = False
 
     if loadSave:
         savedData = loadGameData()
@@ -580,6 +616,9 @@ async def startGame(screen, color, loadSave = False):
 
             for upgradeId in ownedUpgrades:
                 applyUpgradeEffects(upgradeId)
+
+    if wave >= 11:
+        pygame.mixer.music.stop()
 
     fadeInDuration = 500
     fadeStart = pygame.time.get_ticks()
@@ -607,6 +646,9 @@ async def startGame(screen, color, loadSave = False):
                         fistSpawned = True
                         fistX = squareX
                         fistY = squareY
+
+                if event.key == pygame.K_r and umbrellaEnabled and fistSpawned:
+                    umbrellaJoustMode = not umbrellaJoustMode
 
                 if event.key == pygame.K_q and not dashing and currentTime - lastDashTime >= dashCooldown:
                     dx = 0
@@ -665,7 +707,8 @@ async def startGame(screen, color, loadSave = False):
                         saveGameData(wave, money, ownedUpgrades)
                         saveConfirmAlpha = 255
 
-                if fistSpawned and not punching and currentTime - lastPunchTime >= punchCooldown:
+                activePunchCooldown = punchCooldown / 2 if umbrellaEnabled and umbrellaJoustMode else punchCooldown
+                if fistSpawned and not punching and currentTime - lastPunchTime >= activePunchCooldown:
                     mouseX, mouseY = pygame.mouse.get_pos()
                     mouseWorldX = mouseX + cameraX
                     mouseWorldY = mouseY + cameraY
@@ -839,10 +882,50 @@ async def startGame(screen, color, loadSave = False):
                         await die(screen, color)
                         return
 
+        if umbrellaEnabled and fistSpawned and not umbrellaJoustMode:
+            for c in chargers:
+                if c["chargeState"] != "charging":
+                    continue
+
+                chargerOffsetX = c["x"] - fistX
+                chargerOffsetY = c["y"] - fistY
+
+                chargerDistance = math.sqrt(
+                    chargerOffsetX * chargerOffsetX +
+                    chargerOffsetY * chargerOffsetY
+                )
+
+                if chargerDistance == 0:
+                    continue
+
+                chargerDirectionX = chargerOffsetX / chargerDistance
+                chargerDirectionY = chargerOffsetY / chargerDistance
+
+                canopyDotProduct = (
+                    chargerDirectionX * umbrellaAimX +
+                    chargerDirectionY * umbrellaAimY
+                )
+
+                chargerCollisionDistance = (
+                    umbrellaDeflectRadius +
+                    chargerModule.chargerSize / 2
+                )
+
+                if canopyDotProduct >= 0.35 and chargerDistance <= chargerCollisionDistance:
+                    chargerModule.interruptChargeWithPunch(
+                        c,
+                        umbrellaAimX,
+                        umbrellaAimY
+                    )
+
+                    c["last_hit"] = currentTime
+                    punchHitChannel.play(punchHitSoundCached)
+
+
         for c in chargers:
             chargerHalfSize = (chargerModule.chargerSize + squareSize) / 2
-            if abs(c["x"] - squareX) < chargerHalfSize and abs(c["y"] - squareY) < chargerHalfSize:
 
+            if abs(c["x"] - squareX) < chargerHalfSize and abs(c["y"] - squareY) < chargerHalfSize:
                 dashInvincible = dashing and "betterDashes" in ownedUpgrades
 
                 if not dashInvincible:
@@ -865,8 +948,10 @@ async def startGame(screen, color, loadSave = False):
 
                                     pygame.display.update()
                                     await asyncio.sleep(0)
+
                                 await die(screen, color)
                                 return
+
                     else:
                         if currentTime - c["last_hit"] >= 2000:
                             health -= chargerModule.chargerTouchDamage
@@ -885,14 +970,19 @@ async def startGame(screen, color, loadSave = False):
 
                                     pygame.display.update()
                                     await asyncio.sleep(0)
+
                                 await die(screen, color)
                                 return
+
+        activePunchDamage = punchDamage
+        if umbrellaEnabled and umbrellaJoustMode:
+            activePunchDamage += 10
 
         if punching:
             for e in (enemies + shooters)[:]:
                 if abs(fistX - e["x"]) < (fistSize + enemySize) / 2 and \
                 abs(fistY - e["y"]) < (fistSize + enemySize) / 2:
-                    e["hp"] -= punchDamage
+                    e["hp"] -= activePunchDamage
 
                     if not punchHitPlayed:
                         punchHitChannel.play(punchHitSoundCached)
@@ -926,7 +1016,7 @@ async def startGame(screen, color, loadSave = False):
 
             punchElapsed = currentTime - punchStart
 
-            if "betterFists" in ownedUpgrades and not punchParried:
+            if ("betterFists" in ownedUpgrades and not punchParried and not (umbrellaEnabled and umbrellaJoustMode)):
                 for sp in shooterProjectiles[:]:
                     if abs(fistX - sp["x"]) < (fistSize + enemyModule.shooterProjectileSize) / 2 and \
                     abs(fistY - sp["y"]) < (fistSize + enemyModule.shooterProjectileSize) / 2:
@@ -973,6 +1063,9 @@ async def startGame(screen, color, loadSave = False):
             fistX = squareX + punchDirX * punchDistance
             fistY = squareY + punchDirY * punchDistance
 
+            umbrellaAimX = punchDirX
+            umbrellaAimY = punchDirY
+
         elif returning:
             mouseX, mouseY = pygame.mouse.get_pos()
             mouseWorldX = mouseX + cameraX
@@ -1008,6 +1101,10 @@ async def startGame(screen, color, loadSave = False):
             offsetX = mouseWorldX - squareX
             offsetY = mouseWorldY - squareY
             distance = math.sqrt(offsetX * offsetX + offsetY * offsetY)
+
+            if distance > 0:
+                umbrellaAimX = offsetX / distance
+                umbrellaAimY = offsetY / distance
 
             if distance > fistLeash:
                 scale = fistLeash / distance
@@ -1071,6 +1168,37 @@ async def startGame(screen, color, loadSave = False):
             for sp in shooterProjectiles[:]:
                 sp["x"] += sp["dx"]
                 sp["y"] += sp["dy"]
+
+                if umbrellaEnabled and fistSpawned and not umbrellaJoustMode and "betterFists" in ownedUpgrades:
+                    bulletOffsetX = sp["x"] - fistX
+                    bulletOffsetY = sp["y"] - fistY
+                    bulletDistance = math.sqrt(bulletOffsetX * bulletOffsetX + bulletOffsetY * bulletOffsetY)
+
+                    if bulletDistance > 0:
+                        bulletDirectionX = bulletOffsetX / bulletDistance
+                        bulletDirectionY = bulletOffsetY / bulletDistance
+
+                        canopyDotProduct = (bulletDirectionX * umbrellaAimX + bulletDirectionY * umbrellaAimY)
+
+                        bulletCollisionDistance = (umbrellaDeflectRadius + enemyModule.shooterProjectileSize / 2)
+
+                        if canopyDotProduct >= 0.35 and bulletDistance <= bulletCollisionDistance:
+                            shooterProjectiles.remove(sp)
+
+                            parriedBullets.append({
+                                "x": sp["x"],
+                                "y": sp["y"],
+                                "target": sp.get("sourceShooter")
+                            })
+
+                            screenFlashAlpha = screenFlashMaxAlpha
+                            freezeUntil = currentTime + freezeDuration
+
+                            pygame.mixer.music.set_volume(0.0)
+                            musicPausedForParry = True
+
+                            parriedBulletChannel.play(parriedBulletSound)
+                            continue
 
                 distSquared = (sp["x"] - squareX) ** 2 + (sp["y"] - squareY) ** 2
                 if distSquared > 2000 ** 2:
@@ -1168,21 +1296,33 @@ async def startGame(screen, color, loadSave = False):
                                 shooters.remove(e)
 
                 for c in chargers[:]:
-                    if c["chargeState"] == "charging":
-                        continue
+                    chargerHalfSize = (fistSize + chargerModule.chargerSize) / 2
+                    if abs(fistX - c["x"]) < chargerHalfSize and abs(fistY - c["y"]) < chargerHalfSize:
+                        if c["chargeState"] == "charging":
+                            if umbrellaEnabled and umbrellaJoustMode:
+                                c["hp"] -= activePunchDamage
 
-                    cId = id(c)
-                    if cId in field["hitTargets"]:
-                        continue
+                                if not punchHitPlayed:
+                                    punchHitChannel.play(punchHitSoundCached)
+                                    punchHitPlayed = True
 
-                    distSquared = pointToSegmentDistanceSquared(c["x"], c["y"], field["x1"], field["y1"], field["x2"], field["y2"])
-                    if distSquared <= (electricFieldWidth / 2 + chargerModule.chargerSize / 2) ** 2:
-                        c["hp"] -= electricFieldDamage
-                        field["hitTargets"].add(cId)
-                        statuses.slowness(c, currentTime)
+                                if c["hp"] <= 0:
+                                    chargers.remove(c)
 
-                        if c["hp"] <= 0:
-                            chargers.remove(c)
+                            else:
+                                chargerModule.interruptChargeWithPunch(c, punchDirX, punchDirY)
+                                if not punchHitPlayed:
+                                    punchHitChannel.play(punchHitSoundCached)
+                                    punchHitPlayed = True
+
+                        else:
+                            c["hp"] -= activePunchDamage
+                            if not punchHitPlayed:
+                                punchHitChannel.play(punchHitSoundCached)
+                                punchHitPlayed = True
+
+                            if c["hp"] <= 0:
+                                chargers.remove(c)
 
         if not initialSpawnDone and not enemies and not shooters and not chargers and not waitingForNextWave and currentTime - fadeStart > 800 and currentTime - fadeStart < 2000:
             enemies, shooters, chargers = spawnWaveEnemies(wave, squareX, squareY, currentTime)
@@ -1275,9 +1415,40 @@ async def startGame(screen, color, loadSave = False):
             pygame.draw.lines(screen, boltColor, False, screenPoints, electricFieldWidth)
 
         if fistSpawned:
-            fistSurface.set_alpha(alpha)
-            fistRect = fistSurface.get_rect(center=(fistX - cameraX, fistY - cameraY))
-            screen.blit(fistSurface, fistRect)
+            if umbrellaEnabled:
+                umbrellaSurface = (
+                    umbrellaJoustSurface
+                    if umbrellaJoustMode
+                    else umbrellaNormalSurface
+                )
+                umbrellaAngle = -math.degrees(
+                    math.atan2(umbrellaAimY, umbrellaAimX)
+                ) - 90
+
+                if umbrellaJoustMode:
+                    umbrellaAngle += 180
+
+                rotatedUmbrella = pygame.transform.rotate(
+                    umbrellaSurface,
+                    umbrellaAngle
+                )
+
+                rotatedUmbrella.set_alpha(alpha)
+
+                umbrellaRect = rotatedUmbrella.get_rect(
+                    center=(fistX - cameraX, fistY - cameraY)
+                )
+
+                screen.blit(rotatedUmbrella, umbrellaRect)
+
+            else:
+                fistSurface.set_alpha(alpha)
+
+                fistRect = fistSurface.get_rect(
+                    center=(fistX - cameraX, fistY - cameraY)
+                )
+
+                screen.blit(fistSurface, fistRect)
 
         for e in enemies:
             rect = enemySurface.get_rect(center = (e["x"] - cameraX, e["y"] - cameraY))
