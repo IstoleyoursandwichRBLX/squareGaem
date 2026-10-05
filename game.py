@@ -6,9 +6,12 @@ import json
 
 from Things.Enemies import shooters as enemyModule
 from Things.Enemies import chargers as chargerModule
+from Things.Enemies import Iceman as icemanModule
 
 import statuses
 import math
+import dialogue
+import health as healthBar
 
 moveSpeed = 6
 baseEnemySpeed = moveSpeed * 0.75
@@ -524,6 +527,7 @@ async def startGame(screen, color, loadSave = False):
 
     health = 100
     maxHealth = 100
+    playerStatus = {}
     font = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 28)
 
     fistSize = 35
@@ -621,17 +625,50 @@ async def startGame(screen, color, loadSave = False):
     if wave >= 11:
         pygame.mixer.music.stop()
 
+    pausedTotal = 0
+    iceman = None
+    icemanSpawned = False
+    icemanDialoguePending = False
+    icemanChoice = None
+
+    icemanAppearTime = 0
+    icemanDialogueTime = 0
+    icemanFadeDuration = 600
+    icemanDialogueDelay = 0
+
+    icemanActive = False
+    icemanBar = None
+    icemanDefeated = False
+    icemanLastPunchStart = -1
+
+    icemanSurface = icemanModule.createIcemanSurface()
+
+    async def pausedDialogue(dialogueCall):
+        nonlocal pausedTotal
+
+        pauseStart = pygame.time.get_ticks()
+        pygame.mixer.pause()
+        pygame.mixer.music.pause()
+
+        try:
+            return await dialogueCall
+        finally:
+            pygame.mixer.unpause()
+            pygame.mixer.music.unpause()
+            pausedTotal += pygame.time.get_ticks() - pauseStart
+
     fadeInDuration = 500
     fadeStart = pygame.time.get_ticks()
     alpha = 0
 
     while True:
-        currentTime = pygame.time.get_ticks()
+        currentTime = pygame.time.get_ticks() - pausedTotal
         elapsed = currentTime - fadeStart
 
         fadeT = min(elapsed / fadeInDuration, 1)
         fadeT = easeOut(fadeT)
         alpha = int(lerp(0, 255, fadeT))
+        playerFrozen = statuses.isFrozen(playerStatus, currentTime)
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -639,7 +676,7 @@ async def startGame(screen, color, loadSave = False):
                 sys.exit()
 
             if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_e:
+                if event.key == pygame.K_e and not playerFrozen:
                     if fistSpawned:
                         fistSpawned = False
                         punching = False
@@ -648,10 +685,10 @@ async def startGame(screen, color, loadSave = False):
                         fistX = squareX
                         fistY = squareY
 
-                if event.key == pygame.K_r and umbrellaEnabled and fistSpawned:
+                if event.key == pygame.K_r and umbrellaEnabled and fistSpawned and not playerFrozen:
                     umbrellaJoustMode = not umbrellaJoustMode
 
-                if event.key == pygame.K_q and not dashing and currentTime - lastDashTime >= dashCooldown:
+                if event.key == pygame.K_q and not dashing and not playerFrozen and currentTime - lastDashTime >= dashCooldown:
                     dx = 0
                     dy = 0
 
@@ -707,7 +744,7 @@ async def startGame(screen, color, loadSave = False):
                         saveConfirmAlpha = 255
 
                 activePunchCooldown = punchCooldown / 2 if umbrellaEnabled and umbrellaJoustMode else punchCooldown
-                if fistSpawned and not punching and currentTime - lastPunchTime >= activePunchCooldown:
+                if fistSpawned and not punching and not playerFrozen and currentTime - lastPunchTime >= activePunchCooldown:
                     mouseX, mouseY = pygame.mouse.get_pos()
                     mouseWorldX = mouseX + cameraX
                     mouseWorldY = mouseY + cameraY
@@ -737,7 +774,7 @@ async def startGame(screen, color, loadSave = False):
 
                     punchSwishChannel.play(punchSwishSoundCached)
 
-                elif not fistSpawned and currentTime - lastShotTime >= projectileCooldown:
+                elif not fistSpawned and not playerFrozen and currentTime - lastShotTime >= projectileCooldown:
                     mouseX, mouseY = pygame.mouse.get_pos()
                     
                     mouseWorldX = mouseX + cameraX
@@ -770,7 +807,7 @@ async def startGame(screen, color, loadSave = False):
             pygame.mixer.music.set_volume(mainMusicVolume)
             musicPausedForParry = False
 
-        if not frozen:
+        if not frozen and not playerFrozen:
             if dashing:
                 if "electricDashes" not in ownedUpgrades:
                     squareX += dashDirX * dashSpeed
@@ -880,6 +917,42 @@ async def startGame(screen, color, loadSave = False):
                             await asyncio.sleep(0)
                         await die(screen, color)
                         return
+
+        if icemanActive and iceman is not None:
+            dashInvincible = dashing and "betterDashes" in ownedUpgrades
+            icemanDamage = 0
+
+            if not frozen:
+                behaviourDamage, icemanFroze = icemanModule.updateIcemanBehaviour(
+                    iceman, currentTime, projectiles, punching,
+                    squareX, squareY, squareSize, punchDirX, punchDirY, dashInvincible, playerFrozen
+                )
+                icemanDamage += behaviourDamage
+
+                if icemanFroze:
+                    statuses.freeze(playerStatus, currentTime, icemanModule.icemanFrozenDuration)
+
+            if not dashInvincible:
+                icemanDamage += icemanModule.tryTouchDamage(iceman, squareX, squareY, squareSize, currentTime)
+
+            if icemanDamage > 0:
+                health -= icemanDamage
+
+                if health <= 0:
+                    health = 0
+                    pygame.mixer.music.stop()
+                    deathStart = pygame.time.get_ticks()
+
+                    while pygame.time.get_ticks() - deathStart < 250:
+                        for event in pygame.event.get():
+                            if event.type == pygame.QUIT:
+                                pygame.quit()
+                                sys.exit()
+
+                        pygame.display.update()
+                        await asyncio.sleep(0)
+                    await die(screen, color)
+                    return
 
         if umbrellaEnabled and fistSpawned and not umbrellaJoustMode:
             for c in chargers:
@@ -1013,6 +1086,13 @@ async def startGame(screen, color, loadSave = False):
                         if c["hp"] <= 0:
                             chargers.remove(c)
 
+            if icemanActive and iceman is not None and icemanLastPunchStart != punchStart:
+                if icemanModule.overlaps(iceman, fistX, fistY, fistSize):
+                    icemanModule.damage(iceman, activePunchDamage)
+                    icemanLastPunchStart = punchStart
+                    punchHitChannel.play(punchHitSoundCached)
+                    punchHitPlayed = True
+
             punchElapsed = currentTime - punchStart
 
             if ("betterFists" in ownedUpgrades and not punchParried and not (umbrellaEnabled and umbrellaJoustMode)):
@@ -1143,6 +1223,12 @@ async def startGame(screen, color, loadSave = False):
                             if e in shooters:
                                 shooters.remove(e)
                         break
+
+                if p in projectiles and icemanActive and iceman is not None:
+                    if icemanModule.overlaps(iceman, p["x"], p["y"], projectileSize):
+                        icemanModule.damage(iceman, 5)
+                        projectiles.remove(p)
+                        continue
 
                 if p in projectiles:
                     for c in chargers[:]:
@@ -1316,6 +1402,11 @@ async def startGame(screen, color, loadSave = False):
                             if e in shooters:
                                 shooters.remove(e)
 
+                if icemanActive and iceman is not None and id(iceman) not in field["hitTargets"]:
+                    if icemanModule.touchesSegment(iceman, field["x1"], field["y1"], field["x2"], field["y2"], electricFieldWidth):
+                        icemanModule.damage(iceman, electricFieldDamage)
+                        field["hitTargets"].add(id(iceman))
+
                 for c in chargers[:]:
                     chargerHalfSize = (fistSize + chargerModule.chargerSize) / 2
                     if abs(fistX - c["x"]) < chargerHalfSize and abs(fistY - c["y"]) < chargerHalfSize:
@@ -1345,16 +1436,32 @@ async def startGame(screen, color, loadSave = False):
                             if c["hp"] <= 0:
                                 chargers.remove(c)
 
+        if icemanActive and iceman is not None and iceman["hp"] <= 0:
+            pygame.mixer.music.stop()
+            iceman = None
+            icemanActive = False
+            icemanBar = None
+            icemanDefeated = True
+
         if not initialSpawnDone and not enemies and not shooters and not chargers and not waitingForNextWave and currentTime - fadeStart > 800 and currentTime - fadeStart < 2000:
             enemies, shooters, chargers = spawnWaveEnemies(wave, squareX, squareY, currentTime)
             initialSpawnDone = True
 
-        if not enemies and not shooters and not chargers and not waitingForNextWave and not inIntermission and wave >= 1 and currentTime - fadeStart > 2000:
-            if wave % 5 == 0:
+        if not enemies and not shooters and not chargers and not waitingForNextWave and not inIntermission and (not icemanSpawned or icemanDefeated) and wave >= 1 and currentTime - fadeStart > 2000:
+            if wave == 10 and not icemanSpawned:
+                iceman = icemanModule.spawnIceman(squareX, squareY, moveSpeed)
+
+                icemanSpawned = True
+                health = maxHealth
+                icemanDialoguePending = True
+                icemanAppearTime = currentTime
+                icemanDialogueTime = currentTime + icemanDialogueDelay
+
+            elif wave % 5 == 0:
                 health = maxHealth
                 inIntermission = True
                 intermissionStart = currentTime
-                money += 50
+                money += 100 if wave % 10 == 0 else (50 if wave % 5 == 0 else 0)
 
                 projectiles.clear()
                 shooterProjectiles.clear()
@@ -1412,6 +1519,7 @@ async def startGame(screen, color, loadSave = False):
 
         squareSurface.set_alpha(alpha)
         screen.blit(squareSurface, (squareRect.x - cameraX, squareRect.y - cameraY))
+        statuses.drawFrozen(screen, playerStatus, squareX - cameraX, squareY - cameraY, squareSize, currentTime)
 
         for p in projectiles:
             pygame.draw.rect(screen, (255, 255, 255), 
@@ -1488,6 +1596,12 @@ async def startGame(screen, color, loadSave = False):
             rect = shooterSurface.get_rect(center = (s["x"] - cameraX, s["y"] - cameraY))
             screen.blit(shooterSurface, rect)
 
+        if iceman is not None:
+            icemanModule.drawFreezeIndicator(screen, iceman, cameraX, cameraY, squareSize, currentTime)
+
+            rect = icemanSurface.get_rect(center = (iceman["x"] - cameraX, iceman["y"] - cameraY))
+            screen.blit(icemanSurface, rect)
+
         for c in chargers[:]:
             for img in c["chargeAfterimages"][:]:
                 img["alpha"] -= 12
@@ -1506,7 +1620,7 @@ async def startGame(screen, color, loadSave = False):
         healthText = renderCachedText(hudTextCache, "health", font, f"Health: {health}", (255, 255, 255))
         screen.blit(healthText, (20, 20))
 
-        enemiesLeftText = renderCachedText(hudTextCache, "enemiesLeft", font, f"Enemies Left: {len(enemies) + len(shooters) + len(chargers)}", (255, 255, 255))
+        enemiesLeftText = renderCachedText(hudTextCache, "enemiesLeft", font, f"Enemies Left: {len(enemies) + len(shooters) + len(chargers) + (1 if iceman is not None else 0)}", (255, 255, 255))
         screen.blit(enemiesLeftText, (20 + healthText.get_width() + 30, 20))
 
         waveText = renderCachedText(hudTextCache, "wave", font, f"Wave: {wave}", (255, 255, 255))
@@ -1595,6 +1709,33 @@ async def startGame(screen, color, loadSave = False):
             screen.blit(screenFlashSurface, (0, 0))
 
             screenFlashAlpha = max(0, screenFlashAlpha - screenFlashDecay)
+
+        if icemanActive and icemanBar is not None:
+            healthBar.drawBossBar(screen, icemanBar, iceman["hp"], currentTime)
+
+        if icemanDialoguePending and currentTime >= icemanDialogueTime:
+            icemanDialoguePending = False
+
+            icemanChoice = await pausedDialogue(
+                dialogue.createAnswerDialogue(
+                    screen, "Iceman", "I am Iceman.", 0.03,
+                    [("silent", "..."), ("ok", "Ok")]
+                )
+            )
+
+            icemanActive = True
+
+            pygame.mixer.music.load("Things/OST/IcemanTheme.ogg")
+            pygame.mixer.music.set_volume(mainMusicVolume)
+            pygame.mixer.music.play(-1)
+            
+            icemanModule.startIceman(iceman, pygame.time.get_ticks() - pausedTotal)
+            icemanModule.startIceman(iceman, pygame.time.get_ticks() - pausedTotal)
+            icemanBar = healthBar.createBossBar(
+                "Iceman",
+                iceman["max_hp"],
+                pygame.time.get_ticks() - pausedTotal
+            )
 
         pygame.display.update()
         clock.tick(60)

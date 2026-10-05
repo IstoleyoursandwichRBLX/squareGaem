@@ -275,6 +275,19 @@ async def showEnemyIndex():
                 "Charge: 35 Damage,",
                 "5 second cooldown."
             ]
+        },
+        {
+            "name": "Iceman",
+            "color": (153, 255, 255),
+            "image": "Things/Images/Iceman.png",
+            "stats": [
+                "HP: 400",
+                "Base Damage: 20",
+                "Abilities:",
+                "Slide: 2x Speed (3s) / 2s CD",
+                "Freeze: 35 Damage (1.5s) ",
+                "/ 7.5s CD"
+            ]
         }
     ]
 
@@ -294,6 +307,13 @@ async def showEnemyIndex():
     fadeDuration = 500
     fadeStart = pygame.time.get_ticks()
     menuSnapshot = screen.copy()
+
+    enemyImageCache = {}
+    for enemy in enemyData:
+        if "image" in enemy:
+            img = pygame.image.load(enemy["image"]).convert_alpha()
+            img = pygame.transform.smoothscale(img, (enemySize, enemySize))
+            enemyImageCache[enemy["name"]] = img
 
     while True:
         currentTime = pygame.time.get_ticks()
@@ -329,9 +349,13 @@ async def showEnemyIndex():
 
         enemyAngle = (enemyAngle + 2) % 360
 
-        enemySurface = createSquareSurface(currentEnemy["color"], enemySize)
+        if currentEnemy["name"] in enemyImageCache:
+            enemySurface = enemyImageCache[currentEnemy["name"]]
+        else:
+            enemySurface = createSquareSurface(currentEnemy["color"], enemySize)
+
         rotatedEnemy = pygame.transform.rotate(enemySurface, -enemyAngle)
-        rotatedEnemyRect = rotatedEnemy.get_rect(center=(610, 510))
+        rotatedEnemyRect = rotatedEnemy.get_rect(center = (610, 510))
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
