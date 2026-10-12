@@ -8,6 +8,7 @@ import sys
 
 import hashlib
 import json
+import cloud
 
 pygame.init()
 screen = pygame.display.set_mode((1920, 980))
@@ -197,35 +198,10 @@ USERNAMEMAX = 20
 PASSWORDMAX = 20
 
 def loadAccounts():
-    if isWeb():
-        try:
-            import platform
-            value = platform.window.localStorage.getItem(ACCOUNTSKEY)
-            if value:
-                return json.loads(value)
-        except:
-            pass
-        return {}
-
-    try:
-        with open(ACCOUNTSPATH, "r") as f:
-            return json.load(f)
-    except:
-        return {}
+    return cloud.get(ACCOUNTSKEY, {})
 
 def saveAccounts(accs):
-    if isWeb():
-        try:
-            import platform
-            platform.window.localStorage.setItem(ACCOUNTSKEY, json.dumps(accs))
-        except:
-            pass
-    else:
-        try:
-            with open(ACCOUNTSPATH, "w") as f:
-                json.dump(accs, f)
-        except:
-            pass
+    cloud.put(ACCOUNTSKEY, accs)
 
 def hashPassword(password, salt):
     return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
@@ -281,6 +257,8 @@ def saveLastUser(username):
 
 async def accountScreen():
     accounts = loadAccounts()
+    await cloud.pull(ACCOUNTSKEY, {})
+    
     signingUp = len(accounts) == 0
 
     usernameRect = pygame.Rect(610, 380, 700, 60)
@@ -1034,6 +1012,7 @@ async def menuMain():
     global you
 
     await checkPassword()
+    await cloud.pull(ACCOUNTSKEY, {})
 
     lastUser = loadLastUser()
     accounts = loadAccounts()
