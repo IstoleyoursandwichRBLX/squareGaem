@@ -4,7 +4,7 @@ import random
 import pygame
 
 icemanName = "Iceman"
-icemanSize = 110
+icemanSize = 140
 icemanMaxHP = 400
 icemanTouchDamage = 20
 icemanTouchCooldown = 2000

@@ -17,7 +17,17 @@ moveSpeed = 6
 baseEnemySpeed = moveSpeed * 0.75
 hudTextCache = {}
 
-saveFilePath = "Things/Data/save.json"
+currentUser = None
+
+def saveFileName():
+    if currentUser:
+        return f"Things/Data/save_{currentUser.lower()}.json"
+    return "Things/Data/save.json"
+
+def saveStorageKey():
+    if currentUser:
+        return f"squareGameSave_{currentUser.lower()}"
+    return "squareGameSave"
 
 def isWebPlatform():
     return sys.platform == "emscripten"
@@ -32,12 +42,12 @@ def saveGameData(wave, money, ownedUpgrades):
     if isWebPlatform():
         try:
             import platform
-            platform.window.localStorage.setItem("square_game_save", json.dumps(data))
+            platform.window.localStorage.setItem(saveStorageKey(), json.dumps(data))
         except:
             pass
     else:
         try:
-            with open(saveFilePath, "w") as f:
+            with open(saveFileName(), "w") as f:
                 json.dump(data, f)
         except:
             pass
@@ -46,7 +56,7 @@ def loadGameData():
     if isWebPlatform():
         try:
             import platform
-            value = platform.window.localStorage.getItem("square_game_save")
+            value = platform.window.localStorage.getItem(saveStorageKey())
             if value:
                 return json.loads(value)
         except:
@@ -54,7 +64,7 @@ def loadGameData():
         return None
     else:
         try:
-            with open(saveFilePath, "r") as f:
+            with open(saveFileName(), "r") as f:
                 return json.load(f)
         except:
             return None
@@ -1729,7 +1739,6 @@ async def startGame(screen, color, loadSave = False):
             pygame.mixer.music.set_volume(mainMusicVolume)
             pygame.mixer.music.play(-1)
             
-            icemanModule.startIceman(iceman, pygame.time.get_ticks() - pausedTotal)
             icemanModule.startIceman(iceman, pygame.time.get_ticks() - pausedTotal)
             icemanBar = healthBar.createBossBar(
                 "Iceman",

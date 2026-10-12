@@ -6,6 +6,9 @@ import game
 import asyncio
 import sys
 
+import hashlib
+import json
+
 pygame.init()
 screen = pygame.display.set_mode((1920, 980))
 pygame.display.set_caption("Square Game")
@@ -183,6 +186,546 @@ async def checkPassword():
             errSurface = smallFont.render(errorMessage, True, (255, 80, 80))
             errRect = errSurface.get_rect(center=(inputRect.centerx, inputRect.y - 40))
             screen.blit(errSurface, errRect)
+
+        pygame.display.update()
+        clock.tick(60)
+        await asyncio.sleep(0)
+
+ACCOUNTSPATH = "Things/Data/accounts.json"
+ACCOUNTSKEY = "square_game_accounts"
+USERNAMEMAX = 20
+PASSWORDMAX = 20
+
+def loadAccounts():
+    if isWeb():
+        try:
+            import platform
+            value = platform.window.localStorage.getItem(ACCOUNTSKEY)
+            if value:
+                return json.loads(value)
+        except:
+            pass
+        return {}
+
+    try:
+        with open(ACCOUNTSPATH, "r") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def saveAccounts(accs):
+    if isWeb():
+        try:
+            import platform
+            platform.window.localStorage.setItem(ACCOUNTSKEY, json.dumps(accs))
+        except:
+            pass
+    else:
+        try:
+            with open(ACCOUNTSPATH, "w") as f:
+                json.dump(accs, f)
+        except:
+            pass
+
+def hashPassword(password, salt):
+    return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
+
+def passwordProblem(password):
+    if len(password) < 8:
+        return "Password needs 8+ characters"
+    if not any(c.islower() for c in password):
+        return "Needs a lowercase letter"
+    if not any(c.isupper() for c in password):
+        return "Needs an uppercase letter"
+    if not any(c.isdigit() for c in password):
+        return "Needs a number"
+    if not any(not c.isalnum() and not c.isspace() for c in password):
+        return "Needs a special character"
+    return ""
+
+def checkNewAccount(username, password):
+    if len(username) < 3:
+        return "Username needs 3+ characters"
+    return passwordProblem(password)
+
+LASTUSERPATH = "Things/Data/lastUser.txt"
+LASTUSERKEY = "squareGameLastUser"
+
+def loadLastUser():
+    if isWeb():
+        try:
+            import platform
+            return platform.window.localStorage.getItem(LASTUSERKEY) or ""
+        except:
+            return ""
+
+    try:
+        with open(LASTUSERPATH, "r") as f:
+            return f.read().strip()
+    except:
+        return ""
+
+def saveLastUser(username):
+    if isWeb():
+        try:
+            import platform
+            platform.window.localStorage.setItem(LASTUSERKEY, username)
+        except:
+            pass
+    else:
+        try:
+            with open(LASTUSERPATH, "w") as f:
+                f.write(username)
+        except:
+            pass
+
+async def accountScreen():
+    accounts = loadAccounts()
+    signingUp = len(accounts) == 0
+
+    usernameRect = pygame.Rect(610, 380, 700, 60)
+    passwordRect = pygame.Rect(610, 480, 700, 60)
+    buttonRect = pygame.Rect(610, 590, 700, 90)
+    switchRect = pygame.Rect(610, 780, 700, 70)
+
+    username = ""
+    password = ""
+    focus = 0
+    errorMessage = ""
+    cursorTimer = 0
+    showCursor = True
+
+    while True:
+        mousePos = pygame.mouse.get_pos()
+        submit = False
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if usernameRect.collidepoint(event.pos):
+                    focus = 0
+                elif passwordRect.collidepoint(event.pos):
+                    focus = 1
+                elif buttonRect.collidepoint(event.pos):
+                    submit = True
+                elif switchRect.collidepoint(event.pos):
+                    signingUp = not signingUp
+                    errorMessage = ""
+                    password = ""
+
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_TAB:
+                    focus = 1 - focus
+                elif event.key == pygame.K_RETURN:
+                    if focus == 0:
+                        focus = 1
+                    else:
+                        submit = True
+                elif event.key == pygame.K_BACKSPACE:
+                    if focus == 0:
+                        username = username[:-1]
+                    else:
+                        password = password[:-1]
+                    errorMessage = ""
+                elif event.unicode and event.unicode.isprintable():
+                    if focus == 0:
+                        ch = event.unicode
+                        if ch.isascii() and (ch.isalnum() or ch == "_") and len(username) < USERNAMEMAX:
+                            username += ch
+                    elif len(password) < PASSWORDMAX:
+                        password += event.unicode
+                    errorMessage = ""
+
+        if submit:
+            key = username.lower()
+
+            if signingUp:
+                errorMessage = checkNewAccount(username, password)
+
+                if not errorMessage and key in accounts:
+                    errorMessage = "Username already taken"
+
+                if not errorMessage:
+                    salt = os.urandom(8).hex()
+                    accounts[key] = {
+                        "username": username,
+                        "salt": salt,
+                        "hash": hashPassword(password, salt)
+                    }
+                    saveAccounts(accounts)
+                    return username
+            else:
+                account = accounts.get(key)
+
+                if account and account["hash"] == hashPassword(password, account["salt"]):
+                    return account["username"]
+
+                errorMessage = "Incorrect username or password"
+                password = ""
+
+        cursorTimer += 1
+        if cursorTimer >= 30:
+            cursorTimer = 0
+            showCursor = not showCursor
+
+        screen.fill((20, 20, 20))
+
+        title = mainFont.render("Sign Up" if signingUp else "Log In", False, "White")
+        screen.blit(title, title.get_rect(center = (screen.get_width() // 2, 250)))
+
+        fields = ((usernameRect, username, "Username", 0), (passwordRect, "*" * len(password), "Password", 1))
+
+        for rect, text, placeholder, index in fields:
+            pygame.draw.rect(screen, (0, 0, 0), rect)
+            pygame.draw.rect(screen, (122, 190, 255) if focus == index else (255, 255, 255), rect, width = 3)
+
+            textSurface = smallFont.render(text if text else placeholder, True, (200, 200, 200) if text else (120, 120, 120))
+            screen.blit(textSurface, (rect.x + 15, rect.y + 15))
+
+            if focus == index and showCursor:
+                cursorX = rect.x + 15 + (textSurface.get_width() + 2 if text else 0)
+                pygame.draw.rect(screen, (255, 255, 255), (cursorX, rect.y + 15, 3, 30))
+
+        makeButton(screen, buttonRect, "Sign Up" if signingUp else "Log In", mousePos, 1.0, 255, smallFont)
+        makeButton(screen, switchRect, "Switch to Log In" if signingUp else "Switch to Sign Up", mousePos, 1.0, 255, smallFont)
+
+        if errorMessage:
+            errSurface = smallFont.render(errorMessage, True, (255, 80, 80))
+            screen.blit(errSurface, errSurface.get_rect(center = (screen.get_width() // 2, 735)))
+
+        pygame.display.update()
+        clock.tick(60)
+        await asyncio.sleep(0)
+
+DELETESTEPS = 5
+
+def saveFileFor(name):
+    return f"Things/Data/save_{name.lower()}.json"
+
+def saveKeyFor(name):
+    return f"squareGameSave_{name.lower()}"
+
+def moveSave(oldName, newName):
+    if isWeb():
+        try:
+            import platform
+            storage = platform.window.localStorage
+            value = storage.getItem(saveKeyFor(oldName))
+
+            if value:
+                storage.setItem(saveKeyFor(newName), value)
+
+            storage.removeItem(saveKeyFor(oldName))
+        except:
+            pass
+    else:
+        try:
+            if os.path.exists(saveFileFor(oldName)):
+                os.replace(saveFileFor(oldName), saveFileFor(newName))
+        except:
+            pass
+
+def deleteSave(name):
+    if isWeb():
+        try:
+            import platform
+            platform.window.localStorage.removeItem(saveKeyFor(name))
+        except:
+            pass
+    else:
+        try:
+            if os.path.exists(saveFileFor(name)):
+                os.remove(saveFileFor(name))
+        except:
+            pass
+
+def verifyPassword(username, password):
+    account = loadAccounts().get(username.lower())
+    return bool(account) and account["hash"] == hashPassword(password, account["salt"])
+
+def renameAccount(oldName, newName):
+    if len(newName) < 3:
+        return "Username needs 3+ characters"
+
+    if newName == oldName:
+        return "That is already your username"
+
+    accounts = loadAccounts()
+    oldKey = oldName.lower()
+    newKey = newName.lower()
+
+    if oldKey not in accounts:
+        return "Account not found"
+
+    if newKey != oldKey and newKey in accounts:
+        return "Username already taken"
+
+    account = accounts.pop(oldKey)
+    account["username"] = newName
+    accounts[newKey] = account
+    saveAccounts(accounts)
+
+    if newKey != oldKey:
+        moveSave(oldName, newName)
+
+    saveLastUser(newName)
+    return ""
+
+def changePassword(username, oldPassword, newPassword, confirmPassword):
+    accounts = loadAccounts()
+    account = accounts.get(username.lower())
+
+    if not account:
+        return "Account not found"
+
+    if account["hash"] != hashPassword(oldPassword, account["salt"]):
+        return "Old password is incorrect"
+
+    problem = passwordProblem(newPassword)
+
+    if problem:
+        return problem
+
+    if newPassword != confirmPassword:
+        return "New passwords do not match"
+
+    if newPassword == oldPassword:
+        return "New password must be different"
+
+    salt = os.urandom(8).hex()
+    account["salt"] = salt
+    account["hash"] = hashPassword(newPassword, salt)
+    saveAccounts(accounts)
+    return ""
+
+def deleteAccount(username):
+    accounts = loadAccounts()
+    accounts.pop(username.lower(), None)
+    saveAccounts(accounts)
+    deleteSave(username)
+    saveLastUser("")
+
+def drawInputField(surface, rect, text, placeholder, focused, showCursor, font):
+    pygame.draw.rect(surface, (0, 0, 0), rect)
+    pygame.draw.rect(surface, (122, 190, 255) if focused else (255, 255, 255), rect, width = 3)
+
+    textSurface = font.render(text if text else placeholder, True, (200, 200, 200) if text else (120, 120, 120))
+    surface.blit(textSurface, (rect.x + 15, rect.y + 15))
+
+    if focused and showCursor:
+        cursorX = rect.x + 15 + (textSurface.get_width() + 2 if text else 0)
+        pygame.draw.rect(surface, (255, 255, 255), (cursorX, rect.y + 15, 3, 30))
+
+def drawColorButton(surface, rect, text, mousePos, normalColor, hoverColor, font):
+    pygame.draw.rect(surface, hoverColor if rect.collidepoint(mousePos) else normalColor, rect)
+    pygame.draw.rect(surface, textColor, rect, width = 3)
+
+    label = font.render(text, False, textColor)
+    surface.blit(label, label.get_rect(center = rect.center))
+
+async def profileScreen(currentName):
+    labelFont = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 20)
+    red = (255, 80, 80)
+    green = (120, 220, 120)
+    dimText = (180, 180, 200)
+
+    closeRect = pygame.Rect(1770, 40, 105, 75)
+
+    usernameRect = pygame.Rect(240, 260, 640, 60)
+    usernameSaveRect = pygame.Rect(240, 350, 640, 80)
+
+    oldRect = pygame.Rect(1040, 260, 640, 60)
+    newRect = pygame.Rect(1040, 350, 640, 60)
+    confirmRect = pygame.Rect(1040, 440, 640, 60)
+    passwordSaveRect = pygame.Rect(1040, 530, 640, 80)
+
+    deleteRect = pygame.Rect(240, 700, 640, 80)
+    yesRect = pygame.Rect(240, 840, 300, 70)
+    noRect = pygame.Rect(580, 840, 300, 70)
+    deletePasswordRect = pygame.Rect(240, 840, 640, 60)
+
+    name = currentName
+    values = [currentName, "", "", "", ""]
+    focus = 0
+
+    usernameMessage = None
+    passwordMessage = None
+    deleteError = ""
+
+    deleteStage = 0
+    deleteRound = 0
+
+    cursorTimer = 0
+    showCursor = True
+
+    while True:
+        mousePos = pygame.mouse.get_pos()
+        saveUsername = False
+        savePassword = False
+        submitDelete = False
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if closeRect.collidepoint(event.pos):
+                    return name
+
+                if usernameRect.collidepoint(event.pos):
+                    focus = 0
+                elif oldRect.collidepoint(event.pos):
+                    focus = 1
+                elif newRect.collidepoint(event.pos):
+                    focus = 2
+                elif confirmRect.collidepoint(event.pos):
+                    focus = 3
+                elif deleteStage == 2 and deletePasswordRect.collidepoint(event.pos):
+                    focus = 4
+                elif usernameSaveRect.collidepoint(event.pos):
+                    saveUsername = True
+                elif passwordSaveRect.collidepoint(event.pos):
+                    savePassword = True
+                elif deleteRect.collidepoint(event.pos):
+                    if deleteStage == 0:
+                        deleteStage = 1
+                        deleteRound = 0
+                        deleteError = ""
+                elif deleteStage == 1 and yesRect.collidepoint(event.pos):
+                    deleteStage = 2
+                    values[4] = ""
+                    deleteError = ""
+                    focus = 4
+                elif deleteStage == 1 and noRect.collidepoint(event.pos):
+                    deleteStage = 0
+                    deleteRound = 0
+                    values[4] = ""
+                    deleteError = ""
+
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return name
+
+                elif event.key == pygame.K_TAB:
+                    order = [0, 1, 2, 3, 4] if deleteStage == 2 else [0, 1, 2, 3]
+                    focus = order[(order.index(focus) + 1) % len(order)] if focus in order else 0
+
+                elif event.key == pygame.K_RETURN:
+                    if focus == 0:
+                        saveUsername = True
+                    elif focus == 1 or focus == 2:
+                        focus += 1
+                    elif focus == 3:
+                        savePassword = True
+                    elif focus == 4:
+                        submitDelete = True
+
+                elif event.key == pygame.K_BACKSPACE or (event.unicode and event.unicode.isprintable()):
+                    if event.key == pygame.K_BACKSPACE:
+                        values[focus] = values[focus][:-1]
+                    else:
+                        ch = event.unicode
+
+                        if focus == 0:
+                            if ch.isascii() and (ch.isalnum() or ch == "_") and len(values[0]) < USERNAMEMAX:
+                                values[0] += ch
+                        elif len(values[focus]) < PASSWORDMAX:
+                            values[focus] += ch
+
+                    if focus == 0:
+                        usernameMessage = None
+                    elif focus == 4:
+                        deleteError = ""
+                    else:
+                        passwordMessage = None
+
+        if saveUsername:
+            error = renameAccount(name, values[0])
+
+            if error:
+                usernameMessage = (error, red)
+            else:
+                name = values[0]
+                usernameMessage = ("Username saved", green)
+
+        if savePassword:
+            error = changePassword(name, values[1], values[2], values[3])
+
+            if error:
+                passwordMessage = (error, red)
+            else:
+                values[1] = ""
+                values[2] = ""
+                values[3] = ""
+                passwordMessage = ("Password saved", green)
+
+        if submitDelete:
+            if verifyPassword(name, values[4]):
+                deleteRound += 1
+                values[4] = ""
+
+                if deleteRound >= DELETESTEPS:
+                    deleteAccount(name)
+                    return None
+
+                deleteStage = 1
+                deleteError = ""
+                focus = 0
+            else:
+                deleteError = "Incorrect password"
+                values[4] = ""
+
+        cursorTimer += 1
+        if cursorTimer >= 30:
+            cursorTimer = 0
+            showCursor = not showCursor
+
+        screen.fill((15, 15, 22))
+
+        title = mainFont.render("PROFILE", False, textColor)
+        screen.blit(title, title.get_rect(center = (screen.get_width() // 2, 100)))
+        pygame.draw.line(screen, (115, 115, 145), (170, 165), (1750, 165), width = 4)
+
+        drawColorButton(screen, closeRect, "X", mousePos, (75, 40, 40), (130, 55, 55), smallFont)
+
+        screen.blit(labelFont.render("USERNAME", False, dimText), (usernameRect.x, usernameRect.y - 35))
+        screen.blit(labelFont.render("CHANGE PASSWORD", False, dimText), (oldRect.x, oldRect.y - 35))
+
+        drawInputField(screen, usernameRect, values[0], "Username", focus == 0, showCursor, smallFont)
+        drawInputField(screen, oldRect, "*" * len(values[1]), "Old Password", focus == 1, showCursor, smallFont)
+        drawInputField(screen, newRect, "*" * len(values[2]), "New Password", focus == 2, showCursor, smallFont)
+        drawInputField(screen, confirmRect, "*" * len(values[3]), "Confirm New Password", focus == 3, showCursor, smallFont)
+
+        makeButton(screen, usernameSaveRect, "Save Changes", mousePos, 1.0, 255, smallFont)
+        makeButton(screen, passwordSaveRect, "Save Changes", mousePos, 1.0, 255, smallFont)
+
+        if usernameMessage:
+            screen.blit(labelFont.render(usernameMessage[0], False, usernameMessage[1]), (usernameSaveRect.x, usernameSaveRect.bottom + 20))
+
+        if passwordMessage:
+            screen.blit(labelFont.render(passwordMessage[0], False, passwordMessage[1]), (passwordSaveRect.x, passwordSaveRect.bottom + 20))
+
+        drawColorButton(screen, deleteRect, "Delete Account", mousePos, (110, 30, 30), (170, 45, 45), smallFont)
+
+        if deleteStage == 1:
+            prompt = labelFont.render(f"Are you sure? ({deleteRound + 1}/{DELETESTEPS})", False, (255, 120, 120))
+            screen.blit(prompt, (deleteRect.x, deleteRect.bottom + 25))
+
+            drawColorButton(screen, yesRect, "Yes", mousePos, (110, 30, 30), (170, 45, 45), smallFont)
+            makeButton(screen, noRect, "No", mousePos, 1.0, 255, smallFont)
+
+        elif deleteStage == 2:
+            prompt = labelFont.render(f"Enter password to confirm ({deleteRound + 1}/{DELETESTEPS})", False, (255, 120, 120))
+            screen.blit(prompt, (deleteRect.x, deleteRect.bottom + 25))
+
+            drawInputField(screen, deletePasswordRect, "*" * len(values[4]), "Password", focus == 4, showCursor, smallFont)
+
+            if deleteError:
+                screen.blit(labelFont.render(deleteError, False, red), (deletePasswordRect.x, deletePasswordRect.bottom + 15))
 
         pygame.display.update()
         clock.tick(60)
@@ -491,6 +1034,16 @@ async def menuMain():
     global you
 
     await checkPassword()
+
+    lastUser = loadLastUser()
+    accounts = loadAccounts()
+
+    if lastUser and lastUser.lower() in accounts:
+        game.currentUser = accounts[lastUser.lower()]["username"]
+    else:
+        game.currentUser = await accountScreen()
+        saveLastUser(game.currentUser)
+
     startMenuMusic()
 
     duration = 1000
@@ -547,6 +1100,10 @@ async def menuMain():
         "Q + W/A/S/D - Dash"
     ]
     controlsLineSurfaces = [controlsFont.render(line, True, textColor) for line in controlsLines]
+
+    profileButtonRect = pygame.Rect(1540, 905, 360, 55)
+    profileButtonFont = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 18)
+    usernameFont = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 22)
 
     while True:
         mousePos = pygame.mouse.get_pos()
@@ -664,6 +1221,17 @@ async def menuMain():
                 if scaledSettingsButton.collidepoint(mousePos) and t >= 1 and not transitioning and not startingGame and not isOnLeft:
                     await showEnemyIndex()
 
+                if profileButtonRect.collidepoint(mousePos) and t >= 1 and not transitioning and not startingGame and not isOnLeft:
+                    profileResult = await profileScreen(game.currentUser)
+
+                    if profileResult is None:
+                        pygame.mixer.music.stop()
+                        game.currentUser = await accountScreen()
+                        saveLastUser(game.currentUser)
+                        startMenuMusic()
+                    else:
+                        game.currentUser = profileResult
+
                 if rotatedRect.collidepoint(mousePos) and t >= 1 and not transitioning:
                     transitioning = True
                     transitionStart = currentTime
@@ -718,6 +1286,11 @@ async def menuMain():
         if uiAlpha > 0:
             makeButton(screen, scaledButton, "Play", mousePos, currentScale, uiAlpha)
             makeButton(screen, scaledSettingsButton, "Enemy Index", mousePos, settingsCurrentScale,uiAlpha, enemyIndexButtonFont)
+
+            userSurface = usernameFont.render(game.currentUser, False, textColor)
+            userSurface.set_alpha(uiAlpha)
+            screen.blit(userSurface, userSurface.get_rect(bottomright = (profileButtonRect.right, profileButtonRect.top - 12)))
+            makeButton(screen, profileButtonRect, "View Profile", mousePos, 1.0, uiAlpha, profileButtonFont)
 
         if uiAlpha > 0:
             lineSpacing = 26
