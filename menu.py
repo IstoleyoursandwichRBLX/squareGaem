@@ -514,6 +514,7 @@ async def profileScreen(currentName):
 
     usernameRect = pygame.Rect(240, 260, 640, 60)
     usernameSaveRect = pygame.Rect(240, 350, 640, 80)
+    logoutRect = pygame.Rect(240, 500, 640, 80)
 
     oldRect = pygame.Rect(1040, 260, 640, 60)
     newRect = pygame.Rect(1040, 350, 640, 60)
@@ -568,6 +569,14 @@ async def profileScreen(currentName):
                     saveUsername = True
                 elif passwordSaveRect.collidepoint(event.pos):
                     savePassword = True
+                elif logoutRect.collidepoint(event.pos):
+                    saveLastUser("")
+                    return None
+                elif deleteRect.collidepoint(event.pos):
+                    if deleteStage == 0:
+                        deleteStage = 1
+                        deleteRound = 0
+                        deleteError = ""
                 elif deleteRect.collidepoint(event.pos):
                     if deleteStage == 0:
                         deleteStage = 1
@@ -680,6 +689,7 @@ async def profileScreen(currentName):
 
         makeButton(screen, usernameSaveRect, "Save Changes", mousePos, 1.0, 255, smallFont)
         makeButton(screen, passwordSaveRect, "Save Changes", mousePos, 1.0, 255, smallFont)
+        makeButton(screen, logoutRect, "Log Out", mousePos, 1.0, 255, smallFont)
 
         if usernameMessage:
             screen.blit(labelFont.render(usernameMessage[0], False, usernameMessage[1]), (usernameSaveRect.x, usernameSaveRect.bottom + 20))
