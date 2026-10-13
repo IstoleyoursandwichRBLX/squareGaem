@@ -37,37 +37,20 @@ textColor = (255, 255, 255)
 def isWeb():
     return sys.platform == "emscripten"
 
-def saveColor(color):
-    if isWeb():
-        try:
-            import platform
-            platform.window.localStorage.setItem("color_save", f"{color[0]},{color[1]},{color[2]}")
-        except:
-            pass
-    else:
-        with open("Things/Data/color_save.txt", "w") as f:
-            f.write(f"{color[0]},{color[1]},{color[2]}")
+def colorKeyFor(name):
+    return f"squareGameColor_{name.lower()}"
 
-def loadColor():
-    if isWeb():
-        try:
-            import platform
-            value = platform.window.localStorage.getItem("color_save")
-            if value:
-                parts = value.split(",")
-                return (int(parts[0]), int(parts[1]), int(parts[2]))
-        except:
-            pass
+def saveColor(name, color):
+    cloud.put(colorKeyFor(name), [color[0], color[1], color[2]])
+
+def loadColor(name):
+    value = cloud.get(colorKeyFor(name), None)
+    try:
+        return (int(value[0]), int(value[1]), int(value[2]))
+    except:
         return (30, 100, 180)
-    else:
-        try:
-            with open("Things/Data/color_save.txt", "r") as f:
-                parts = f.read().strip().split(",")
-                return (int(parts[0]), int(parts[1]), int(parts[2]))
-        except:
-            return (30, 100, 180)
 
-you = loadColor()
+you = (30, 100, 180)
 
 def makeButton(surface, rect, text, mousePos, scale, alpha = 255, font = mainFont):
     if rect.collidepoint(mousePos):
@@ -380,45 +363,24 @@ async def accountScreen():
 
 DELETESTEPS = 5
 
-def saveFileFor(name):
-    return f"Things/Data/save_{name.lower()}.json"
+def userKeys(name):
+    return [f"squareGameSave_{name.lower()}", colorKeyFor(name)]
 
-def saveKeyFor(name):
-    return f"squareGameSave_{name.lower()}"
+async def loadUserData(name):
+    for key in userKeys(name):
+        await cloud.pull(key, None)
+    return loadColor(name)
 
-def moveSave(oldName, newName):
-    if isWeb():
-        try:
-            import platform
-            storage = platform.window.localStorage
-            value = storage.getItem(saveKeyFor(oldName))
+def moveUserData(oldName, newName):
+    for oldKey, newKey in zip(userKeys(oldName), userKeys(newName)):
+        value = cloud.get(oldKey, None)
+        if value is not None:
+            cloud.put(newKey, value)
+        cloud.remove(oldKey)
 
-            if value:
-                storage.setItem(saveKeyFor(newName), value)
-
-            storage.removeItem(saveKeyFor(oldName))
-        except:
-            pass
-    else:
-        try:
-            if os.path.exists(saveFileFor(oldName)):
-                os.replace(saveFileFor(oldName), saveFileFor(newName))
-        except:
-            pass
-
-def deleteSave(name):
-    if isWeb():
-        try:
-            import platform
-            platform.window.localStorage.removeItem(saveKeyFor(name))
-        except:
-            pass
-    else:
-        try:
-            if os.path.exists(saveFileFor(name)):
-                os.remove(saveFileFor(name))
-        except:
-            pass
+def deleteUserData(name):
+    for key in userKeys(name):
+        cloud.remove(key)
 
 def verifyPassword(username, password):
     account = loadAccounts().get(username.lower())
@@ -447,7 +409,7 @@ def renameAccount(oldName, newName):
     saveAccounts(accounts)
 
     if newKey != oldKey:
-        moveSave(oldName, newName)
+        moveUserData(oldName, newName)
 
     saveLastUser(newName)
     return ""
@@ -482,8 +444,9 @@ def changePassword(username, oldPassword, newPassword, confirmPassword):
 def deleteAccount(username):
     accounts = loadAccounts()
     accounts.pop(username.lower(), None)
+
     saveAccounts(accounts)
-    deleteSave(username)
+    deleteUserData(username)
     saveLastUser("")
 
 def drawInputField(surface, rect, text, placeholder, focused, showCursor, font):
@@ -719,58 +682,91 @@ async def profileScreen(currentName):
         clock.tick(60)
         await asyncio.sleep(0)
 
-async def chooseSaveOption(screen):
-    optionFont = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 30)
-    titleSurface = optionFont.render("Choose an option:", True, textColor)
+async def chooseSaveOption(screen, saveData):
+    titleFont = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 42)
+    nameFont = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 30)
+    statFont = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 20)
+    smallIndexFont = pygame.font.Font("Things/Fonts/PressStart2P.ttf", 15)
 
-    buttonWidth = 500
-    buttonHeight = 140
+    dimText = (180, 180, 200)
+    green = (120, 220, 120)
+
+    wave = saveData.get("wave", 1)
+    money = saveData.get("money", 0)
+    upgradeNames = [
+        game.upgradeDefinitions[u]["name"]
+        for u in saveData.get("upgrades", [])
+        if u in game.upgradeDefinitions
+    ]
+
+    upgradeText = ", ".join(upgradeNames) if upgradeNames else "None"
+    upgradeLines = game.wrapText(statFont, upgradeText, 890)[:3]
+
+    panel = pygame.Rect(0, 0, 1000, 560)
+    panel.center = (screen.get_width() // 2, 520)
+
+    buttonWidth = 440
+    buttonHeight = 90
     gap = 60
+    buttonsY = panel.bottom - 130
+    startX = panel.centerx - (buttonWidth * 2 + gap) // 2
 
-    totalWidth = buttonWidth * 2 + gap
-    startX = screen.get_width() // 2 - totalWidth // 2
-    centerY = screen.get_height() // 2 + 40
+    continueRect = pygame.Rect(startX, buttonsY, buttonWidth, buttonHeight)
+    newGameRect = pygame.Rect(startX + buttonWidth + gap, buttonsY, buttonWidth, buttonHeight)
 
-    newGameRect = pygame.Rect(startX, centerY - buttonHeight // 2, buttonWidth, buttonHeight)
-    loadSaveRect = pygame.Rect(startX + buttonWidth + gap, centerY - buttonHeight // 2, buttonWidth, buttonHeight)
-
+    continueScale = 1.0
     newGameScale = 1.0
-    loadSaveScale = 1.0
     scaleSpeed = 0.18
 
     while True:
         mousePos = pygame.mouse.get_pos()
 
-        newGameHover = newGameRect.collidepoint(mousePos)
-        loadSaveHover = loadSaveRect.collidepoint(mousePos)
+        continueScale += ((1.1 if continueRect.collidepoint(mousePos) else 1.0) - continueScale) * scaleSpeed
+        newGameScale += ((1.1 if newGameRect.collidepoint(mousePos) else 1.0) - newGameScale) * scaleSpeed
 
-        newGameScale += ((1.15 if newGameHover else 1.0) - newGameScale) * scaleSpeed
-        loadSaveScale += ((1.15 if loadSaveHover else 1.0) - loadSaveScale) * scaleSpeed
+        scaledContinue = pygame.Rect(0, 0, int(buttonWidth * continueScale), int(buttonHeight * continueScale))
+        scaledContinue.center = continueRect.center
 
         scaledNewGame = pygame.Rect(0, 0, int(buttonWidth * newGameScale), int(buttonHeight * newGameScale))
         scaledNewGame.center = newGameRect.center
-
-        scaledLoadSave = pygame.Rect(0, 0, int(buttonWidth * loadSaveScale), int(buttonHeight * loadSaveScale))
-        scaledLoadSave.center = loadSaveRect.center
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
 
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                if scaledNewGame.collidepoint(mousePos):
-                    return False
-                if scaledLoadSave.collidepoint(mousePos):
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if scaledContinue.collidepoint(event.pos):
                     return True
+                if scaledNewGame.collidepoint(event.pos):
+                    return False
 
-        screen.fill((20, 20, 20))
+        screen.fill((15, 15, 22))
 
-        titleRect = titleSurface.get_rect(center=(screen.get_width() // 2, centerY - buttonHeight // 2 - 90))
-        screen.blit(titleSurface, titleRect)
+        title = titleFont.render("SAVE FOUND", False, textColor)
+        screen.blit(title, title.get_rect(center = (screen.get_width() // 2, 100)))
+        pygame.draw.line(screen, (115, 115, 145), (170, 165), (1750, 165), width = 4)
 
-        makeButton(screen, scaledNewGame, "New Game", mousePos, newGameScale)
-        makeButton(screen, scaledLoadSave, "Load Save", mousePos, loadSaveScale)
+        pygame.draw.rect(screen, (28, 28, 40), panel)
+        pygame.draw.rect(screen, textColor, panel, width = 4)
+
+        name = nameFont.render(game.currentUser, False, textColor)
+        screen.blit(name, name.get_rect(center = (panel.centerx, panel.y + 60)))
+        pygame.draw.line(screen, green, (panel.x + 55, panel.y + 105), (panel.right - 55, panel.y + 105), width = 5)
+
+        textX = panel.x + 55
+        screen.blit(statFont.render(f"Wave: {wave}", False, textColor), (textX, panel.y + 140))
+        screen.blit(statFont.render(f"Money: £{money}", False, textColor), (textX, panel.y + 190))
+        screen.blit(statFont.render("Upgrades:", False, dimText), (textX, panel.y + 240))
+
+        for i, line in enumerate(upgradeLines):
+            screen.blit(statFont.render(line, False, textColor), (textX, panel.y + 280 + i * 38))
+
+        makeButton(screen, scaledContinue, "Continue", mousePos, continueScale, 255, smallFont)
+        makeButton(screen, scaledNewGame, "New Game", mousePos, newGameScale, 255, smallFont)
+
+        hint = smallIndexFont.render("NEW GAME KEEPS YOUR SAVE UNTIL YOU SAVE AGAIN", False, (130, 130, 155))
+        screen.blit(hint, hint.get_rect(center = (screen.get_width() // 2, panel.bottom + 45)))
 
         pygame.display.update()
         clock.tick(60)
@@ -1033,6 +1029,7 @@ async def menuMain():
         game.currentUser = await accountScreen()
         saveLastUser(game.currentUser)
 
+    you = await loadUserData(game.currentUser)
     startMenuMusic()
 
     duration = 1000
@@ -1178,9 +1175,13 @@ async def menuMain():
             squareAlpha = int(lerp(255, 0, fadeT))
 
             if fadeT >= 1:
+                await cloud.pull(game.saveStorageKey(), None)
+
                 loadSave = False
-                if game.hasSaveGame():
-                    loadSave = await chooseSaveOption(screen)
+                saveData = game.loadGameData()
+
+                if saveData:
+                    loadSave = await chooseSaveOption(screen, saveData)
 
                 await game.startGame(screen, you, loadSave)
                 return
@@ -1216,7 +1217,13 @@ async def menuMain():
                     if profileResult is None:
                         pygame.mixer.music.stop()
                         game.currentUser = await accountScreen()
+
                         saveLastUser(game.currentUser)
+                        you = await loadUserData(game.currentUser)
+
+                        squareSurface = createSquareSurface(you, squareSize)
+                        rotatedCache.clear()
+
                         startMenuMusic()
                     else:
                         game.currentUser = profileResult
@@ -1252,7 +1259,7 @@ async def menuMain():
                     squareSurface = createSquareSurface(you, squareSize)
                     rotatedCache.clear()
 
-                    saveColor(you)
+                    saveColor(game.currentUser, you)
 
                 if rotatedRect.collidepoint(mousePos) and t >= 1 and not transitioning:
                     transitioning = True

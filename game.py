@@ -3,6 +3,7 @@ import sys
 import random
 import asyncio
 import json
+import cloud
 
 from Things.Enemies import shooters as enemyModule
 from Things.Enemies import chargers as chargerModule
@@ -19,55 +20,20 @@ hudTextCache = {}
 
 currentUser = None
 
-def saveFileName():
-    if currentUser:
-        return f"Things/Data/save_{currentUser.lower()}.json"
-    return "Things/Data/save.json"
-
 def saveStorageKey():
     if currentUser:
         return f"squareGameSave_{currentUser.lower()}"
     return "squareGameSave"
 
-def isWebPlatform():
-    return sys.platform == "emscripten"
-
 def saveGameData(wave, money, ownedUpgrades):
-    data = {
+    cloud.put(saveStorageKey(), {
         "wave": wave + 1,
         "money": money,
         "upgrades": list(ownedUpgrades)
-    }
-
-    if isWebPlatform():
-        try:
-            import platform
-            platform.window.localStorage.setItem(saveStorageKey(), json.dumps(data))
-        except:
-            pass
-    else:
-        try:
-            with open(saveFileName(), "w") as f:
-                json.dump(data, f)
-        except:
-            pass
+    })
 
 def loadGameData():
-    if isWebPlatform():
-        try:
-            import platform
-            value = platform.window.localStorage.getItem(saveStorageKey())
-            if value:
-                return json.loads(value)
-        except:
-            pass
-        return None
-    else:
-        try:
-            with open(saveFileName(), "r") as f:
-                return json.load(f)
-        except:
-            return None
+    return cloud.get(saveStorageKey(), None)
 
 def hasSaveGame():
     return loadGameData() is not None
